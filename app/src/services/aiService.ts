@@ -17,8 +17,34 @@
 import { createWorker } from 'tesseract.js';
 import type { ExtractedContent, QuestionPaperConfig, Question, QuestionType } from '../types';
 
-const PROVIDER = (import.meta.env.VITE_AI_PROVIDER || 'mock') as 'mock' | 'openai' | 'anthropic' | 'watsonx';
-const API_KEY  = import.meta.env.VITE_AI_API_KEY || '';
+import type { AIProvider } from '../types';
+
+// Runtime provider/key — reads from localStorage (set via Settings page),
+// with .env as a developer fallback. Re-read on every call so settings
+// changes take effect immediately without a page reload.
+function getProvider(): AIProvider {
+  try {
+    const s = JSON.parse(localStorage.getItem('sanju_settings') || '{}');
+    if (s.aiProvider) return s.aiProvider as AIProvider;
+  } catch { /* ignore */ }
+  return (import.meta.env.VITE_AI_PROVIDER || 'mock') as AIProvider;
+}
+
+function getApiKey(): string {
+  try {
+    const s = JSON.parse(localStorage.getItem('sanju_settings') || '{}');
+    if (s.apiKey) return s.apiKey as string;
+  } catch { /* ignore */ }
+  return import.meta.env.VITE_AI_API_KEY || '';
+}
+
+function getLocalModelId(): string {
+  try {
+    const s = JSON.parse(localStorage.getItem('sanju_settings') || '{}');
+    return s.localModelId || 'Llama-3.2-1B-Instruct-q4f16_1-MLC';
+  } catch { /* ignore */ }
+  return 'Llama-3.2-1B-Instruct-q4f16_1-MLC';
+}
 
 // ─── PDF extraction (pdfjs-dist) ─────────────────────────────────────────────
 
@@ -95,6 +121,7 @@ async function fileToBase64(file: File): Promise<string> {
 }
 
 export async function extractTextFromImage(file: File): Promise<string> {
+  const PROVIDER = getProvider();
   if (PROVIDER === 'mock') {
     await delay(1500);
     return [
@@ -103,6 +130,11 @@ export async function extractTextFromImage(file: File): Promise<string> {
       'Topic: Multiplication – 6× and 7× tables',
       'Homework: Complete worksheet page 47',
     ].join('\n');
+  }
+
+  // Local LLM has no vision — use Tesseract.js OCR instead
+  if (PROVIDER === 'local') {
+    return extractTextFromImageWithOCR(file);
   }
 
   const base64 = await fileToBase64(file);
@@ -122,9 +154,27 @@ export async function extractTextFromImage(file: File): Promise<string> {
   throw new Error(`Image extraction is not supported for provider "${PROVIDER}". Use openai or anthropic.`);
 }
 
+/** Tesseract.js OCR for images — used when provider is 'local' (no vision API available). */
+async function extractTextFromImageWithOCR(file: File): Promise<string> {
+  const worker = await createWorker('eng');
+  try {
+    const imageBitmap = await createImageBitmap(file);
+    const canvas = document.createElement('canvas');
+    canvas.width = imageBitmap.width;
+    canvas.height = imageBitmap.height;
+    canvas.getContext('2d')!.drawImage(imageBitmap, 0, 0);
+    const { data: { text } } = await worker.recognize(canvas);
+    if (!text.trim()) throw new Error('Could not extract any text from this image.');
+    return text.trim();
+  } finally {
+    await worker.terminate();
+  }
+}
+
 // ─── URL / link extraction ────────────────────────────────────────────────────
 
 export async function extractContentFromUrl(url: string): Promise<string> {
+  const PROVIDER = getProvider();
   if (PROVIDER === 'mock') {
     await delay(1000);
     return 'Sample educational content extracted from URL.';
@@ -177,15 +227,17 @@ TEXT TO ANALYZE:
 `;
 
 export async function analyzeExtractedText(text: string): Promise<ExtractedContent> {
+  const PROVIDER = getProvider();
   if (PROVIDER === 'mock') {
     await delay(2000);
     return mockAnalyze(text);
   }
 
   let raw: string;
-  if (PROVIDER === 'openai')    raw = await callOpenAIChat(ANALYSIS_PROMPT + text);
+  if (PROVIDER === 'openai')         raw = await callOpenAIChat(ANALYSIS_PROMPT + text);
   else if (PROVIDER === 'anthropic') raw = await callAnthropicChat(ANALYSIS_PROMPT + text);
   else if (PROVIDER === 'watsonx')   raw = await callWatsonxChat(ANALYSIS_PROMPT + text);
+  else if (PROVIDER === 'local')     raw = await callLocalLLMChat(ANALYSIS_PROMPT + text);
   else throw new Error(`Unknown AI provider: ${PROVIDER}`);
 
   return parseAnalysisResponse(raw);
@@ -220,7 +272,32 @@ function parseAnalysisResponse(raw: string): ExtractedContent {
 
 // ─── OpenAI ───────────────────────────────────────────────────────────────────
 
+async function callLocalLLMChat(prompt: string): Promise<string> {
+  const { getEngine, getLoadedModelId, initEngine } = await import('./webllmEngine');
+  const modelId = getLocalModelId();
+  let engine = getEngine();
+  // If the engine isn't ready or a different model is selected, initialise now
+  if (!engine || getLoadedModelId() !== modelId) {
+    await initEngine(modelId);
+    engine = getEngine();
+  }
+  if (!engine) {
+    throw new Error(
+      'No local AI model is loaded. Please go to Settings → Local AI and download a model first.',
+    );
+  }
+  const reply = await engine.chat.completions.create({
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.2,
+    max_tokens: 1000,
+  });
+  return reply.choices?.[0]?.message?.content ?? '';
+}
+
+// ─── OpenAI ───────────────────────────────────────────────────────────────────
+
 async function callOpenAIChat(prompt: string): Promise<string> {
+  const API_KEY = getApiKey();
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${API_KEY}` },
@@ -240,6 +317,7 @@ async function callOpenAIChat(prompt: string): Promise<string> {
 }
 
 async function callOpenAIVision(base64: string, mimeType: string, prompt: string): Promise<string> {
+  const API_KEY = getApiKey();
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${API_KEY}` },
@@ -267,6 +345,7 @@ async function callOpenAIVision(base64: string, mimeType: string, prompt: string
 // ─── Anthropic ────────────────────────────────────────────────────────────────
 
 async function callAnthropicChat(prompt: string): Promise<string> {
+  const API_KEY = getApiKey();
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -294,6 +373,7 @@ async function callAnthropicVision(base64: string, mimeType: string, prompt: str
     ? (mimeType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp')
     : 'image/jpeg';
 
+  const API_KEY = getApiKey();
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -407,6 +487,7 @@ export interface StudyGuideSection {
 }
 
 export async function generateStudyGuide(subject: string, chapter: string): Promise<StudyGuideSection> {
+  const PROVIDER = getProvider();
   if (PROVIDER !== 'mock') {
     const prompt = `You are an AI tutor for Indian primary school children.
 Generate a structured study guide for subject "${subject}", chapter "${chapter}".
@@ -423,9 +504,10 @@ Return ONLY valid JSON — no markdown fences, no commentary — matching this s
   }
 }`;
     let raw = '';
-    if (PROVIDER === 'openai')    raw = await callOpenAIChat(prompt);
+    if (PROVIDER === 'openai')         raw = await callOpenAIChat(prompt);
     else if (PROVIDER === 'anthropic') raw = await callAnthropicChat(prompt);
     else if (PROVIDER === 'watsonx')   raw = await callWatsonxChat(prompt);
+    else if (PROVIDER === 'local')     raw = await callLocalLLMChat(prompt);
 
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
     try {

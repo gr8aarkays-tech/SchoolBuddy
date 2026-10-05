@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider } from './contexts/AppContext';
 import { AuthProvider } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { SettingsProvider } from './contexts/SettingsContext';
 import { ProtectedLayout } from './components/Layout';
 import { LoginPage, RegisterPage } from './pages/AuthPages';
 import { Dashboard } from './pages/Dashboard';
@@ -20,6 +21,7 @@ import { Settings } from './pages/Settings';
 export default function App() {
   return (
     <ThemeProvider>
+      <SettingsProvider>
       <AuthProvider>
         <AppProvider>
           <BrowserRouter basename="/SchoolBuddy">
@@ -47,6 +49,7 @@ export default function App() {
           </BrowserRouter>
         </AppProvider>
       </AuthProvider>
+      </SettingsProvider>
     </ThemeProvider>
   );
 }

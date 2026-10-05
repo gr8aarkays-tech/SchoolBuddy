@@ -1,3 +1,19 @@
+// ─── App Settings ─────────────────────────────────────────────────────────────
+
+export type AIProvider = 'mock' | 'openai' | 'anthropic' | 'watsonx' | 'local';
+
+export interface AppSettings {
+  aiProvider: AIProvider;
+  apiKey: string;
+  localModelId: string;
+}
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  aiProvider: 'mock',
+  apiKey: '',
+  localModelId: 'Llama-3.2-1B-Instruct-q4f16_1-MLC',
+};
+
 // ─── Core entities ───────────────────────────────────────────────────────────
 
 export interface User {

@@ -1,12 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Upload, GraduationCap, BookOpen, FileQuestion,
-  AlertTriangle, CheckCircle, FileText, Zap,
+  AlertTriangle, CheckCircle, FileText, Zap, X, Sparkles,
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
+import { useSettings } from '../contexts/SettingsContext';
 import { ProgressBar, SectionHeader } from '../components/shared/UI';
 import { MATERIAL_TYPE_LABELS, EXAM_TYPE_LABELS } from '../types';
+
+const LOCAL_AI_BANNER_KEY = 'sanju_local_ai_banner_dismissed';
 
 // ── Per-subject emoji + color ───────────────────────────────────────────────
 const SUBJECT_META: Record<string, { emoji: string; color: string }> = {
@@ -39,8 +42,20 @@ const MOTIVATIONAL = [
 
 export function Dashboard() {
   const { selectedChild, getChildExams, getChildMaterials, getChildSubjects, getSubjectChapters, getChapterTopics, getChildQuestionPapers } = useApp();
+  const { settings } = useSettings();
   const greeting = getGreeting();
   const quote = MOTIVATIONAL[new Date().getDay() % MOTIVATIONAL.length];
+
+  // Show banner only when provider is not already 'local', and user hasn't dismissed it
+  const showBannerInitially =
+    settings.aiProvider !== 'local' &&
+    !localStorage.getItem(LOCAL_AI_BANNER_KEY);
+  const [bannerVisible, setBannerVisible] = useState(showBannerInitially);
+
+  const dismissBanner = () => {
+    localStorage.setItem(LOCAL_AI_BANNER_KEY, '1');
+    setBannerVisible(false);
+  };
 
   if (!selectedChild) {
     return (
@@ -89,6 +104,27 @@ export function Dashboard() {
 
   return (
     <div className="space-y-5">
+
+      {/* ── Local AI promo banner (one-time, dismissible) ─────────────── */}
+      {bannerVisible && (
+        <div className="flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
+          <Sparkles className="w-5 h-5 text-blue-500 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <span className="text-sm font-medium text-blue-800">✨ Try Free Local AI</span>
+            <span className="text-sm text-blue-700"> — works offline, no subscription needed. </span>
+            <Link to="/settings" className="text-sm font-semibold text-blue-600 underline underline-offset-2">
+              Set up in Settings →
+            </Link>
+          </div>
+          <button
+            onClick={dismissBanner}
+            aria-label="Dismiss"
+            className="shrink-0 text-blue-400 hover:text-blue-600 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* ── Welcome banner ────────────────────────────────────────────── */}
       <div

@@ -5,16 +5,37 @@ import { mkdirSync, existsSync } from 'fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Always store the DB relative to this file — works on Render free tier and locally
-// Override with DATA_DIR env var if needed (e.g. a mounted persistent disk)
-const DATA_DIR = process.env.DATA_DIR ?? join(__dirname, '..', 'data');
-const DB_PATH = join(DATA_DIR, 'sanjuclass1.db');
+// ─── Database connection ──────────────────────────────────────────────────────
+//
+// Priority order:
+//   1. TURSO_DB_URL + TURSO_DB_TOKEN  → Turso cloud (persistent, survives redeploys)
+//   2. Local file fallback            → used in development when env vars are absent
+//
+// To set up Turso:
+//   1. Sign up free at https://turso.tech
+//   2. turso db create schoolbuddy
+//   3. turso db show schoolbuddy --url   → copy as TURSO_DB_URL
+//   4. turso db tokens create schoolbuddy → copy as TURSO_DB_TOKEN
+//   5. Add both to Render env vars (or .env for local dev)
 
-if (!existsSync(DATA_DIR)) {
-  mkdirSync(DATA_DIR, { recursive: true });
+const TURSO_URL   = process.env.TURSO_DB_URL;
+const TURSO_TOKEN = process.env.TURSO_DB_TOKEN;
+
+let db_config;
+if (TURSO_URL) {
+  // Cloud mode — persistent Turso database
+  db_config = { url: TURSO_URL, authToken: TURSO_TOKEN };
+  console.log('DB: Turso cloud →', TURSO_URL);
+} else {
+  // Local fallback — SQLite file on disk
+  const DATA_DIR = process.env.DATA_DIR ?? join(__dirname, '..', 'data');
+  const DB_PATH  = join(DATA_DIR, 'sanjuclass1.db');
+  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+  db_config = { url: `file:${DB_PATH}` };
+  console.log('DB: local file →', DB_PATH);
 }
 
-export const db = createClient({ url: `file:${DB_PATH}` });
+export const db = createClient(db_config);
 
 // ─── Schema ──────────────────────────────────────────────────────────────────
 

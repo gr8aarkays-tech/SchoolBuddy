@@ -13,3 +13,9 @@
         value: 10000
       - key: NODE_ENV
         value: production
+      # Turso persistent database — set these in the Render dashboard
+      # (do NOT commit actual values here)
+      - key: TURSO_DB_URL
+        sync: false   # marks as a secret — Render will prompt you to fill it in
+      - key: TURSO_DB_TOKEN
+        sync: false
