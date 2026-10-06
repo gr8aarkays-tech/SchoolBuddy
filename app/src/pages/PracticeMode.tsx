@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Dumbbell, ChevronLeft, CheckCircle, XCircle, Trophy, FileQuestion, Plus } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { useNavigate } from 'react-router-dom';
@@ -12,6 +12,8 @@ export function PracticeMode() {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState(false);
   const [showExplanation, setShowExplanation] = useState<string | null>(null);
+  // Guard: prevent saving the attempt more than once per submission
+  const attemptSaved = useRef(false);
 
   if (!selectedChild) return <div className="card text-center py-10 text-gray-500">Please select a child first.</div>;
 
@@ -89,15 +91,16 @@ export function PracticeMode() {
   const questions = selectedPaper.questions;
   const currentQ = questions[currentIdx];
 
-  if (submitted) {
-    // Results
-    const correct = questions.filter(q => answers[q.id]?.trim().toLowerCase() === q.answer.toLowerCase()).length;
-    const score = questions.reduce((s, q) => s + (answers[q.id]?.trim().toLowerCase() === q.answer.toLowerCase() ? q.marks : 0), 0);
-    const pct = Math.round((score / selectedPaper.totalMarks) * 100);
+  // Normalise an open-text answer before comparison (trim, lowercase, collapse whitespace/punctuation)
+  const normalise = (s: string) => s.trim().toLowerCase().replace(/[.,!?;:'"()\-]/g, '').replace(/\s+/g, ' ');
 
-    // Weak topics
-    const wrongTopics = [...new Set(questions.filter(q => answers[q.id]?.trim().toLowerCase() !== q.answer.toLowerCase()).map(q => q.topic))];
+  // Save the practice attempt exactly once when the user submits
+  const correct = submitted ? questions.filter(q => normalise(answers[q.id] ?? '') === normalise(q.answer)).length : 0;
+  const score = submitted ? questions.reduce((s, q) => s + (normalise(answers[q.id] ?? '') === normalise(q.answer) ? q.marks : 0), 0) : 0;
 
+  useEffect(() => {
+    if (!submitted || !selectedPaper || attemptSaved.current) return;
+    attemptSaved.current = true;
     addPracticeAttempt({
       id: `pa-${Date.now()}`,
       questionPaperId: selectedPaper.id,
@@ -107,6 +110,15 @@ export function PracticeMode() {
       totalMarks: selectedPaper.totalMarks,
       completedAt: new Date().toISOString(),
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [submitted]);
+
+  if (submitted && selectedPaper) {
+    // Results
+    const pct = Math.round((score / selectedPaper.totalMarks) * 100);
+
+    // Weak topics
+    const wrongTopics = [...new Set(questions.filter(q => normalise(answers[q.id] ?? '') !== normalise(q.answer)).map(q => q.topic))];
 
     return (
       <div className="space-y-6">
@@ -137,7 +149,7 @@ export function PracticeMode() {
           <h3 className="font-semibold text-gray-900 mb-4">Review All Answers</h3>
           <div className="space-y-3">
             {questions.map((q, i) => {
-              const isCorrect = answers[q.id]?.trim().toLowerCase() === q.answer.toLowerCase();
+              const isCorrect = normalise(answers[q.id] ?? '') === normalise(q.answer);
               return (
                 <div key={q.id} className={`p-3 rounded-xl border ${isCorrect ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
                   <div className="flex items-start gap-2">
@@ -156,8 +168,8 @@ export function PracticeMode() {
         </div>
 
         <div className="flex gap-3">
-          <button onClick={() => { setSelectedPaperId(null); setSubmitted(false); }} className="btn-secondary flex-1">Back to Papers</button>
-          <button onClick={() => { setAnswers({}); setCurrentIdx(0); setSubmitted(false); }} className="btn-primary flex-1">Try Again</button>
+          <button onClick={() => { setSelectedPaperId(null); setSubmitted(false); attemptSaved.current = false; }} className="btn-secondary flex-1">Back to Papers</button>
+          <button onClick={() => { setAnswers({}); setCurrentIdx(0); setSubmitted(false); attemptSaved.current = false; }} className="btn-primary flex-1">Try Again</button>
         </div>
       </div>
     );

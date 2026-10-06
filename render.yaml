@@ -13,6 +13,10 @@
         value: 10000
       - key: NODE_ENV
         value: production
+      # API auth secret — must match VITE_API_SECRET on the frontend
+      # Generate with: openssl rand -hex 32
+      - key: API_SECRET
+        sync: false
       # Turso persistent database — set these in the Render dashboard
       # (do NOT commit actual values here)
       - key: TURSO_DB_URL

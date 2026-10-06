@@ -3,30 +3,57 @@ import { GraduationCap, Plus, Calendar, BookOpen, ChevronRight, Loader, Trash2 }
 import { useApp } from '../contexts/AppContext';
 import { Modal, ProgressBar, SectionHeader } from '../components/shared/UI';
 import { generateExamPlan } from '../services/aiService';
-import type { Exam, ExamType } from '../types';
+import type { Exam, ExamType, Subject, StudyPlan } from '../types';
 import { EXAM_TYPE_LABELS, STUDY_STATUS_LABELS } from '../types';
 
-const SUBJECTS = ['Mathematics', 'English', 'EVS', 'Science', 'Social Studies', 'Hindi', 'Kannada', 'Telugu'];
-
 export function ExamPreparation() {
-  const { selectedChild, getChildExams, addExam, deleteExam } = useApp();
+  const { selectedChild, getChildExams, getChildSubjects, addExam, deleteExam, getExamStudyPlan, saveStudyPlan, deleteStudyPlan } = useApp();
   const [addOpen, setAddOpen] = useState(false);
-  const [studyPlan, setStudyPlan] = useState<{ examName: string; plan: string[] } | null>(null);
+  const [visiblePlanExamId, setVisiblePlanExamId] = useState<string | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
-  const [selectedExam, setSelectedExam] = useState<Exam | null>(null);
+  const [loadingExamId, setLoadingExamId] = useState<string | null>(null);
 
   if (!selectedChild) return <div className="card text-center py-10 text-gray-500">Please select a child first.</div>;
 
   const exams = getChildExams(selectedChild.id);
 
   const handleGeneratePlan = async (exam: Exam) => {
+    // If a plan already exists for this exam, just show it
+    const existing = getExamStudyPlan(exam.id);
+    if (existing) {
+      setVisiblePlanExamId(exam.id);
+      return;
+    }
     setPlanLoading(true);
-    setSelectedExam(exam);
-    setStudyPlan(null);
+    setLoadingExamId(exam.id);
+    setVisiblePlanExamId(null);
     const daysLeft = Math.max(1, Math.ceil((new Date(exam.startDate).getTime() - Date.now()) / 86400000));
-    const plan = await generateExamPlan(exam.name, daysLeft, exam.subjects.map(s => s.subjectName));
-    setStudyPlan({ examName: exam.name, plan });
+    const planLines = await generateExamPlan(exam.name, daysLeft, exam.subjects.map(s => s.subjectName));
+    const plan: StudyPlan = {
+      id: `sp-${Date.now()}`,
+      childId: selectedChild.id,
+      examId: exam.id,
+      activities: planLines.map((line, i) => ({
+        date: '',
+        subject: exam.subjects[i % exam.subjects.length]?.subjectName ?? '',
+        chapter: '',
+        topics: [line],
+        type: 'read' as const,
+        duration: 30,
+        completed: false,
+      })),
+      status: 'active',
+    };
+    await saveStudyPlan(plan);
+    setVisiblePlanExamId(exam.id);
     setPlanLoading(false);
+    setLoadingExamId(null);
+  };
+
+  const handleClearPlan = async (examId: string) => {
+    const existing = getExamStudyPlan(examId);
+    if (existing) await deleteStudyPlan(existing.id);
+    setVisiblePlanExamId(null);
   };
 
   return (
@@ -66,8 +93,8 @@ export function ExamPreparation() {
                   </div>
                   <div className="flex items-center gap-2">
                     <button onClick={() => handleGeneratePlan(exam)} className="btn-secondary text-xs flex items-center gap-1" disabled={planLoading}>
-                      {planLoading && selectedExam?.id === exam.id ? <Loader className="w-3 h-3 animate-spin" /> : <Calendar className="w-3 h-3" />}
-                      AI Plan
+                        {planLoading && loadingExamId === exam.id ? <Loader className="w-3 h-3 animate-spin" /> : <Calendar className="w-3 h-3" />}
+                        {getExamStudyPlan(exam.id) ? 'View Plan' : 'AI Plan'}
                     </button>
                     <button onClick={() => deleteExam(exam.id)} className="text-gray-400 hover:text-red-500 p-1 rounded">
                       <Trash2 className="w-4 h-4" />
@@ -106,30 +133,56 @@ export function ExamPreparation() {
       )}
 
       {/* AI Study Plan */}
-      {studyPlan && (
-        <div className="card">
-          <SectionHeader title={`AI Study Plan: ${studyPlan.examName}`} />
-          <div className="space-y-2">
-            {studyPlan.plan.map((activity, i) => (
-              <div key={i} className="flex items-start gap-3 p-3 bg-blue-50 rounded-lg border border-blue-100">
-                <span className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">{i + 1}</span>
-                <span className="text-sm text-gray-800">{activity}</span>
-              </div>
-            ))}
+      {visiblePlanExamId && (() => {
+        const plan = getExamStudyPlan(visiblePlanExamId);
+        const exam = exams.find(e => e.id === visiblePlanExamId);
+        if (!plan || !exam) return null;
+        return (
+          <div className="card">
+            <SectionHeader
+              title={`AI Study Plan: ${exam.name}`}
+              action={
+                <button
+                  onClick={() => handleClearPlan(visiblePlanExamId)}
+                  className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+                  title="Clear saved plan"
+                >
+                  Clear
+                </button>
+              }
+            />
+            <div className="space-y-2">
+              {plan.activities.map((activity, i) => (
+                <div key={i} className="flex items-start gap-3 p-3 bg-blue-50 rounded-lg border border-blue-100">
+                  <span className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">{i + 1}</span>
+                  <span className="text-sm text-gray-800">{activity.topics[0] ?? ''}</span>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 mt-3">* This plan is AI-generated and saved to your account. Click "Clear" to regenerate.</p>
           </div>
-          <p className="text-xs text-gray-400 mt-3">* This plan is AI-generated. Adjust it based on your child's needs.</p>
-        </div>
-      )}
+        );
+      })()}
 
-      <AddExamModal open={addOpen} onClose={() => setAddOpen(false)} childId={selectedChild.id} addExam={addExam} />
+      <AddExamModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        childId={selectedChild.id}
+        existingSubjects={getChildSubjects(selectedChild.id)}
+        addExam={addExam}
+      />
     </div>
   );
 }
 
-function AddExamModal({ open, onClose, childId, addExam }: {
+// Full list used when the child has no subjects yet
+const ALL_SUBJECTS = ['Mathematics', 'English', 'EVS', 'Science', 'Social Studies', 'Hindi', 'Kannada', 'Telugu'];
+
+function AddExamModal({ open, onClose, childId, existingSubjects, addExam }: {
   open: boolean;
   onClose: () => void;
   childId: string;
+  existingSubjects: Subject[];
   addExam: (exam: Exam) => void | Promise<void>;
 }) {
   const [form, setForm] = useState({
@@ -137,20 +190,26 @@ function AddExamModal({ open, onClose, childId, addExam }: {
     examType: 'monthly' as ExamType,
     startDate: '',
     endDate: '',
-    selectedSubjects: [] as string[],
+    selectedSubjectIds: [] as string[],
   });
 
-  const toggleSubject = (sub: string) => {
+  // Build the list to display: prefer real subjects, fall back to generic names as "virtual" entries
+  const subjectOptions: { id: string; name: string }[] =
+    existingSubjects.length > 0
+      ? existingSubjects
+      : ALL_SUBJECTS.map(n => ({ id: `virtual-${n}`, name: n }));
+
+  const toggleSubject = (id: string) => {
     setForm(f => ({
       ...f,
-      selectedSubjects: f.selectedSubjects.includes(sub)
-        ? f.selectedSubjects.filter(s => s !== sub)
-        : [...f.selectedSubjects, sub],
+      selectedSubjectIds: f.selectedSubjectIds.includes(id)
+        ? f.selectedSubjectIds.filter(s => s !== id)
+        : [...f.selectedSubjectIds, id],
     }));
   };
 
   const handleSubmit = () => {
-    if (!form.name || !form.startDate || form.selectedSubjects.length === 0) return;
+    if (!form.name || !form.startDate || form.selectedSubjectIds.length === 0) return;
     const exam: Exam = {
       id: `exam-${Date.now()}`,
       childId,
@@ -159,19 +218,22 @@ function AddExamModal({ open, onClose, childId, addExam }: {
       startDate: form.startDate,
       endDate: form.endDate || form.startDate,
       preparationStatus: 'not_started',
-      subjects: form.selectedSubjects.map((sub, i) => ({
-        subjectId: `sub-${i}`,
-        subjectName: sub,
-        chapters: [],
-        topicsCovered: 0,
-        topicsStudied: 0,
-        practiceCompleted: 0,
-        revisionStatus: 'not_started',
-      })),
+      subjects: form.selectedSubjectIds.map(id => {
+        const sub = subjectOptions.find(s => s.id === id)!;
+        return {
+          subjectId: sub.id,
+          subjectName: sub.name,
+          chapters: [],
+          topicsCovered: 0,
+          topicsStudied: 0,
+          practiceCompleted: 0,
+          revisionStatus: 'not_started',
+        };
+      }),
     };
     addExam(exam);
     onClose();
-    setForm({ name: '', examType: 'monthly', startDate: '', endDate: '', selectedSubjects: [] });
+    setForm({ name: '', examType: 'monthly', startDate: '', endDate: '', selectedSubjectIds: [] });
   };
 
   return (
@@ -200,20 +262,20 @@ function AddExamModal({ open, onClose, childId, addExam }: {
         <div>
           <label className="label">Subjects</label>
           <div className="flex flex-wrap gap-2">
-            {SUBJECTS.map(sub => (
+            {subjectOptions.map(sub => (
               <button
-                key={sub}
-                onClick={() => toggleSubject(sub)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${form.selectedSubjects.includes(sub) ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                key={sub.id}
+                onClick={() => toggleSubject(sub.id)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${form.selectedSubjectIds.includes(sub.id) ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
               >
-                {sub}
+                {sub.name}
               </button>
             ))}
           </div>
         </div>
         <div className="flex gap-3 pt-2">
           <button onClick={onClose} className="btn-secondary flex-1">Cancel</button>
-          <button onClick={handleSubmit} className="btn-primary flex-1" disabled={!form.name || !form.startDate || form.selectedSubjects.length === 0}>
+          <button onClick={handleSubmit} className="btn-primary flex-1" disabled={!form.name || !form.startDate || form.selectedSubjectIds.length === 0}>
             Add Exam
           </button>
         </div>

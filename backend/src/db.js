@@ -135,6 +135,14 @@ await db.executeMultiple(`
     totalMarks      INTEGER NOT NULL DEFAULT 0,
     completedAt     TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS study_plans (
+    id         TEXT PRIMARY KEY,
+    childId    TEXT NOT NULL,
+    examId     TEXT NOT NULL,
+    activities TEXT NOT NULL DEFAULT '[]',
+    status     TEXT NOT NULL DEFAULT 'active'
+  );
 `);
 
 // ─── Seed data (only if tables are empty) ────────────────────────────────────

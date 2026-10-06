@@ -15,7 +15,7 @@ const DIFFICULTY_EMOJI: Record<string, string> = {
 };
 
 export function QuestionLibrary() {
-  const { selectedChild, getChildQuestionPapers } = useApp();
+  const { selectedChild, getChildQuestionPapers, deleteQuestionPaper } = useApp();
   const navigate = useNavigate();
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -115,6 +115,13 @@ export function QuestionLibrary() {
                       title={isExpanded ? 'Collapse' : 'Expand'}
                     >
                       {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    </button>
+                    <button
+                      onClick={() => { if (window.confirm(`Delete "${paper.title}"?`)) deleteQuestionPaper(paper.id); }}
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 transition-colors"
+                      title="Delete paper"
+                    >
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                 </div>

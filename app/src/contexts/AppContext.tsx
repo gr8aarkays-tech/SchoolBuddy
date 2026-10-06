@@ -9,7 +9,9 @@ import type {
   WeeklyLesson,
   GeneratedQuestionPaper,
   PracticeAttempt,
+  StudyPlan,
 } from '../types';
+// WeeklyLesson re-exported so it is available as a value (not just type) when needed
 import { SUBJECT_COLORS } from '../types';
 import { useAuth, DEMO_USER_ID } from './AuthContext';
 import { api } from '../services/apiService';
@@ -37,6 +39,7 @@ interface AppState {
   weeklyLessons: WeeklyLesson[];
   questionPapers: GeneratedQuestionPaper[];
   practiceAttempts: PracticeAttempt[];
+  studyPlans: StudyPlan[];
 }
 
 interface AppContextValue extends AppState {
@@ -48,17 +51,20 @@ interface AppContextValue extends AppState {
   updateMaterial: (id: string, updates: Partial<UploadedMaterial>) => Promise<void>;
   deleteMaterial: (id: string) => Promise<void>;
   addQuestionPaper: (paper: GeneratedQuestionPaper) => Promise<void>;
+  deleteQuestionPaper: (id: string) => Promise<void>;
   addExam: (exam: Exam) => Promise<void>;
   updateExam: (id: string, updates: Partial<Exam>) => Promise<void>;
   deleteExam: (id: string) => Promise<void>;
   updateTopic: (id: string, updates: Partial<Topic>) => Promise<void>;
   addPracticeAttempt: (attempt: PracticeAttempt) => Promise<void>;
+  addWeeklyLesson: (lesson: WeeklyLesson) => Promise<void>;
+  updateWeeklyLesson: (id: string, updates: Partial<WeeklyLesson>) => Promise<void>;
   /** Upsert a subject for a child — creates it if it doesn't exist yet, returns its id */
-  upsertSubject: (childId: string, name: string) => string;
+  upsertSubject: (childId: string, name: string) => Promise<string>;
   /** Upsert a chapter under a subject — creates it if it doesn't exist yet, returns its id */
-  upsertChapter: (subjectId: string, name: string) => string;
+  upsertChapter: (subjectId: string, name: string) => Promise<string>;
   /** Upsert a topic under a chapter — creates it if it doesn't exist yet */
-  upsertTopic: (chapterId: string, name: string) => void;
+  upsertTopic: (chapterId: string, name: string) => Promise<void>;
   getChildSubjects: (childId: string) => Subject[];
   getSubjectChapters: (subjectId: string) => Chapter[];
   getChapterTopics: (chapterId: string) => Topic[];
@@ -67,6 +73,9 @@ interface AppContextValue extends AppState {
   getMaterialsForSubject: (childId: string, subject: string) => UploadedMaterial[];
   getChildWeeklyLessons: (childId: string) => WeeklyLesson[];
   getChildQuestionPapers: (childId: string) => GeneratedQuestionPaper[];
+  getExamStudyPlan: (examId: string) => StudyPlan | undefined;
+  saveStudyPlan: (plan: StudyPlan) => Promise<void>;
+  deleteStudyPlan: (id: string) => Promise<void>;
   // Kept for backwards compatibility
   currentUser: { id: string; name: string; email: string };
 }
@@ -85,6 +94,7 @@ const EMPTY_STATE: AppState = {
   weeklyLessons: [],
   questionPapers: [],
   practiceAttempts: [],
+  studyPlans: [],
 };
 
 export function AppProvider({ children: reactChildren }: { children: React.ReactNode }) {
@@ -112,6 +122,7 @@ export function AppProvider({ children: reactChildren }: { children: React.React
         weeklyLessons: mockWeeklyLessons,
         questionPapers: [mockQuestionPaper],
         practiceAttempts: mockPracticeAttempts,
+        studyPlans: [],
       });
       return;
     }
@@ -128,7 +139,8 @@ export function AppProvider({ children: reactChildren }: { children: React.React
       api.getWeeklyLessons(),
       api.getQuestionPapers(),
       api.getPracticeAttempts(),
-    ]).then(([children, subjects, chapters, topics, exams, materials, weeklyLessons, questionPapers, practiceAttempts]) => {
+      api.getStudyPlans(),
+    ]).then(([children, subjects, chapters, topics, exams, materials, weeklyLessons, questionPapers, practiceAttempts, studyPlans]) => {
       setState({
         loading: false,
         children,
@@ -141,6 +153,7 @@ export function AppProvider({ children: reactChildren }: { children: React.React
         weeklyLessons,
         questionPapers,
         practiceAttempts,
+        studyPlans,
       });
     }).catch(err => {
       console.error('Failed to load data from API:', err);
@@ -224,6 +237,29 @@ export function AppProvider({ children: reactChildren }: { children: React.React
     }
   }, [isDemo]);
 
+  const deleteQuestionPaper = useCallback(async (id: string) => {
+    if (!isDemo) await api.deleteQuestionPaper(id);
+    setState(s => ({ ...s, questionPapers: s.questionPapers.filter(p => p.id !== id) }));
+  }, [isDemo]);
+
+  const addWeeklyLesson = useCallback(async (lesson: WeeklyLesson) => {
+    if (isDemo) {
+      setState(s => ({ ...s, weeklyLessons: [...s.weeklyLessons, lesson] }));
+    } else {
+      const saved = await api.createWeeklyLesson(lesson);
+      setState(s => ({ ...s, weeklyLessons: [...s.weeklyLessons, saved] }));
+    }
+  }, [isDemo]);
+
+  const updateWeeklyLesson = useCallback(async (id: string, updates: Partial<WeeklyLesson>) => {
+    if (isDemo) {
+      setState(s => ({ ...s, weeklyLessons: s.weeklyLessons.map(l => l.id === id ? { ...l, ...updates } : l) }));
+    } else {
+      const saved = await api.updateWeeklyLesson(id, updates);
+      setState(s => ({ ...s, weeklyLessons: s.weeklyLessons.map(l => l.id === id ? saved : l) }));
+    }
+  }, [isDemo]);
+
   const addExam = useCallback(async (exam: Exam) => {
     if (isDemo) {
       setState(s => ({ ...s, exams: [...s.exams, exam] }));
@@ -267,59 +303,115 @@ export function AppProvider({ children: reactChildren }: { children: React.React
 
   // ─── Upsert helpers — used after material processing to seed the curriculum ─
 
-  const upsertSubject = useCallback((childId: string, name: string): string => {
+  const upsertSubject = useCallback(async (childId: string, name: string): Promise<string> => {
+    // Read current state snapshot synchronously before any await
+    let existing: Subject | undefined;
     let resultId = '';
     setState(s => {
-      const existing = s.subjects.find(
+      existing = s.subjects.find(
         sub => sub.childId === childId && sub.name.toLowerCase() === name.toLowerCase(),
       );
-      if (existing) { resultId = existing.id; return s; }
-      const newSubject: Subject = {
-        id: `sub-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        childId,
-        name,
-        color: SUBJECT_COLORS[name] || 'bg-gray-500',
-      };
-      resultId = newSubject.id;
-      return { ...s, subjects: [...s.subjects, newSubject] };
+      return s; // no mutation yet
     });
-    return resultId;
-  }, []);
+    if (existing) return existing.id;
 
-  const upsertChapter = useCallback((subjectId: string, name: string): string => {
+    const newSubject: Subject = {
+      id: `sub-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      childId,
+      name,
+      color: SUBJECT_COLORS[name] || 'bg-gray-500',
+    };
+
+    if (!isDemo) {
+      const saved = await api.createSubject(newSubject);
+      resultId = saved.id;
+      setState(s => ({ ...s, subjects: [...s.subjects, saved] }));
+    } else {
+      resultId = newSubject.id;
+      setState(s => ({ ...s, subjects: [...s.subjects, newSubject] }));
+    }
+    return resultId;
+  }, [isDemo]);
+
+  const upsertChapter = useCallback(async (subjectId: string, name: string): Promise<string> => {
+    let existing: Chapter | undefined;
     let resultId = '';
     setState(s => {
-      const existing = s.chapters.find(
+      existing = s.chapters.find(
         ch => ch.subjectId === subjectId && ch.name.toLowerCase() === name.toLowerCase(),
       );
-      if (existing) { resultId = existing.id; return s; }
-      const newChapter: Chapter = {
-        id: `ch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        subjectId,
-        name,
-      };
-      resultId = newChapter.id;
-      return { ...s, chapters: [...s.chapters, newChapter] };
+      return s;
     });
-    return resultId;
-  }, []);
+    if (existing) return existing.id;
 
-  const upsertTopic = useCallback((chapterId: string, name: string): void => {
+    const newChapter: Chapter = {
+      id: `ch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      subjectId,
+      name,
+    };
+
+    if (!isDemo) {
+      const saved = await api.createChapter(newChapter);
+      resultId = saved.id;
+      setState(s => ({ ...s, chapters: [...s.chapters, saved] }));
+    } else {
+      resultId = newChapter.id;
+      setState(s => ({ ...s, chapters: [...s.chapters, newChapter] }));
+    }
+    return resultId;
+  }, [isDemo]);
+
+  const upsertTopic = useCallback(async (chapterId: string, name: string): Promise<void> => {
+    let existing: Topic | undefined;
     setState(s => {
-      const existing = s.topics.find(
+      existing = s.topics.find(
         t => t.chapterId === chapterId && t.name.toLowerCase() === name.toLowerCase(),
       );
-      if (existing) return s;
-      const newTopic: Topic = {
-        id: `top-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        chapterId,
-        name,
-        importance: 'medium',
-        studyStatus: 'not_started',
-      };
-      return { ...s, topics: [...s.topics, newTopic] };
+      return s;
     });
-  }, []);
+    if (existing) return;
+
+    const newTopic: Topic = {
+      id: `top-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      chapterId,
+      name,
+      importance: 'medium',
+      studyStatus: 'not_started',
+    };
+
+    if (!isDemo) {
+      const saved = await api.createTopic(newTopic);
+      setState(s => ({ ...s, topics: [...s.topics, saved] }));
+    } else {
+      setState(s => ({ ...s, topics: [...s.topics, newTopic] }));
+    }
+  }, [isDemo]);
+
+  // ─── Study Plans ──────────────────────────────────────────────────────────
+
+  const saveStudyPlan = useCallback(async (plan: StudyPlan) => {
+    const exists = state.studyPlans.some(p => p.id === plan.id);
+    if (isDemo) {
+      setState(s => ({
+        ...s,
+        studyPlans: exists
+          ? s.studyPlans.map(p => p.id === plan.id ? plan : p)
+          : [...s.studyPlans, plan],
+      }));
+    } else if (exists) {
+      const saved = await api.updateStudyPlan(plan.id, { activities: plan.activities, status: plan.status });
+      setState(s => ({ ...s, studyPlans: s.studyPlans.map(p => p.id === plan.id ? saved : p) }));
+    } else {
+      const saved = await api.createStudyPlan(plan);
+      setState(s => ({ ...s, studyPlans: [...s.studyPlans, saved] }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDemo, state.studyPlans]);
+
+  const deleteStudyPlan = useCallback(async (id: string) => {
+    if (!isDemo) await api.deleteStudyPlan(id);
+    setState(s => ({ ...s, studyPlans: s.studyPlans.filter(p => p.id !== id) }));
+  }, [isDemo]);
 
   // ─── Derived getters ──────────────────────────────────────────────────────
 
@@ -334,17 +426,20 @@ export function AppProvider({ children: reactChildren }: { children: React.React
   [state.materials]);
   const getChildWeeklyLessons = useCallback((childId: string) => state.weeklyLessons.filter(l => l.childId === childId), [state.weeklyLessons]);
   const getChildQuestionPapers = useCallback((childId: string) => state.questionPapers.filter(p => p.childId === childId), [state.questionPapers]);
+  const getExamStudyPlan = useCallback((examId: string) => state.studyPlans.find(p => p.examId === examId), [state.studyPlans]);
 
   const value: AppContextValue = {
     ...state,
     currentUser: { id: user?.id ?? '', name: user?.name ?? '', email: user?.email ?? '' },
     selectChild, addChild, updateChild, deleteChild,
     addMaterial, updateMaterial, deleteMaterial,
-    addQuestionPaper, addExam, updateExam, deleteExam,
+    addQuestionPaper, deleteQuestionPaper, addExam, updateExam, deleteExam,
     updateTopic, addPracticeAttempt,
+    addWeeklyLesson, updateWeeklyLesson,
     upsertSubject, upsertChapter, upsertTopic,
     getChildSubjects, getSubjectChapters, getChapterTopics,
     getChildExams, getChildMaterials, getMaterialsForSubject, getChildWeeklyLessons, getChildQuestionPapers,
+    getExamStudyPlan, saveStudyPlan, deleteStudyPlan,
   };
 
   return <AppContext.Provider value={value}>{reactChildren}</AppContext.Provider>;

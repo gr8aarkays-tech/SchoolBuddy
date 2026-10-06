@@ -28,7 +28,16 @@ interface StoredUser extends AuthUser {
   passwordHash: string;
 }
 
-// Simple hash — good enough for a client-side demo app
+/**
+ * Client-side password hashing — intentional limitations to be aware of:
+ *  • Uses djb2, a fast non-cryptographic hash — NOT suitable for server-side auth.
+ *  • No salt: identical passwords produce identical hashes (rainbow-table vulnerable).
+ *  • Stored in localStorage: any XSS attack on the page can read the hash.
+ *
+ * This is intentional for a local-first demo app where all data lives on the
+ * user's own device. If you add a real backend user table, replace this with
+ * bcrypt/argon2 server-side with a per-user salt.
+ */
 function hashPassword(password: string): string {
   let hash = 0;
   for (let i = 0; i < password.length; i++) {

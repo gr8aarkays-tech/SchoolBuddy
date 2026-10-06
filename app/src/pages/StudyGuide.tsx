@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { BookOpen, ChevronDown, ChevronRight, Lightbulb, Eye, Pencil, Dumbbell, Zap, Loader, FileText } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronRight, Lightbulb, Eye, Pencil, Dumbbell, Zap, Loader, FileText, Plus } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
-import { LoadingSpinner, StatusBadge, SectionHeader } from '../components/shared/UI';
+import { LoadingSpinner, StatusBadge, SectionHeader, Modal } from '../components/shared/UI';
 import { generateStudyGuide, buildStudyGuideFromText, type StudyGuideSection } from '../services/aiService';
 import { STUDY_STATUS_LABELS } from '../types';
 
 export function StudyGuide() {
-  const { selectedChild, getChildSubjects, getSubjectChapters, getChapterTopics, updateTopic, getMaterialsForSubject } = useApp();
+  const { selectedChild, getChildSubjects, getSubjectChapters, getChapterTopics, updateTopic, getMaterialsForSubject, upsertSubject, upsertChapter } = useApp();
   const [selectedSubject, setSelectedSubject] = useState('');
   const [selectedChapter, setSelectedChapter] = useState('');
   const [guide, setGuide] = useState<StudyGuideSection | null>(null);
@@ -14,10 +14,41 @@ export function StudyGuide() {
   const [sourceNote, setSourceNote] = useState('');
   const [activeTab, setActiveTab] = useState<'read' | 'highlight' | 'understand' | 'practice' | 'revise'>('read');
   const [expandedTopics, setExpandedTopics] = useState<Set<string>>(new Set());
+  // Add subject/chapter modal state
+  const [addSubjectOpen, setAddSubjectOpen] = useState(false);
+  const [addChapterOpen, setAddChapterOpen] = useState(false);
+  const [newSubjectName, setNewSubjectName] = useState('');
+  const [newChapterName, setNewChapterName] = useState('');
+  const [adding, setAdding] = useState(false);
 
   if (!selectedChild) return <div className="card text-center py-10 text-gray-500">Please select a child first.</div>;
 
   const subjects = getChildSubjects(selectedChild.id);
+
+  const handleAddSubject = async () => {
+    const name = newSubjectName.trim();
+    if (!name) return;
+    setAdding(true);
+    const id = await upsertSubject(selectedChild.id, name);
+    setAdding(false);
+    setNewSubjectName('');
+    setAddSubjectOpen(false);
+    setSelectedSubject(id);
+    setSelectedChapter('');
+    setGuide(null);
+  };
+
+  const handleAddChapter = async () => {
+    const name = newChapterName.trim();
+    if (!name || !selectedSubject) return;
+    setAdding(true);
+    const id = await upsertChapter(selectedSubject, name);
+    setAdding(false);
+    setNewChapterName('');
+    setAddChapterOpen(false);
+    setSelectedChapter(id);
+    setGuide(null);
+  };
 
   const handleSubjectChange = (subjectId: string) => {
     setSelectedSubject(subjectId);
@@ -72,17 +103,23 @@ export function StudyGuide() {
         <div className="grid sm:grid-cols-3 gap-3">
           <div>
             <label className="label">Subject</label>
-            <select className="select" value={selectedSubject} onChange={e => handleSubjectChange(e.target.value)}>
-              <option value="">Select subject…</option>
-              {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+            <div className="flex gap-2">
+              <select className="select flex-1" value={selectedSubject} onChange={e => handleSubjectChange(e.target.value)}>
+                <option value="">Select subject…</option>
+                {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <button onClick={() => setAddSubjectOpen(true)} className="btn-secondary px-2 flex-shrink-0" title="Add new subject"><Plus className="w-4 h-4" /></button>
+            </div>
           </div>
           <div>
             <label className="label">Chapter</label>
-            <select className="select" value={selectedChapter} onChange={e => { setSelectedChapter(e.target.value); setGuide(null); }} disabled={!selectedSubject}>
-              <option value="">Select chapter…</option>
-              {chapters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <div className="flex gap-2">
+              <select className="select flex-1" value={selectedChapter} onChange={e => { setSelectedChapter(e.target.value); setGuide(null); }} disabled={!selectedSubject}>
+                <option value="">Select chapter…</option>
+                {chapters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <button onClick={() => setAddChapterOpen(true)} disabled={!selectedSubject} className="btn-secondary px-2 flex-shrink-0 disabled:opacity-40" title="Add new chapter"><Plus className="w-4 h-4" /></button>
+            </div>
           </div>
           <div className="flex items-end">
             <button
@@ -95,6 +132,35 @@ export function StudyGuide() {
           </div>
         </div>
       </div>
+
+      {/* Add Subject modal */}
+      <Modal open={addSubjectOpen} onClose={() => setAddSubjectOpen(false)} title="Add Subject">
+        <div className="space-y-3">
+          <div>
+            <label className="label">Subject Name *</label>
+            <input type="text" className="input" placeholder="e.g. Science" value={newSubjectName} onChange={e => setNewSubjectName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddSubject()} autoFocus />
+          </div>
+          <div className="flex gap-3 pt-1">
+            <button onClick={() => setAddSubjectOpen(false)} className="btn-secondary flex-1">Cancel</button>
+            <button onClick={handleAddSubject} disabled={!newSubjectName.trim() || adding} className="btn-primary flex-1">{adding ? 'Adding…' : 'Add Subject'}</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Add Chapter modal */}
+      <Modal open={addChapterOpen} onClose={() => setAddChapterOpen(false)} title="Add Chapter">
+        <div className="space-y-3">
+          <p className="text-sm text-gray-500">Adding to: <strong>{subjects.find(s => s.id === selectedSubject)?.name}</strong></p>
+          <div>
+            <label className="label">Chapter Name *</label>
+            <input type="text" className="input" placeholder="e.g. Fractions" value={newChapterName} onChange={e => setNewChapterName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddChapter()} autoFocus />
+          </div>
+          <div className="flex gap-3 pt-1">
+            <button onClick={() => setAddChapterOpen(false)} className="btn-secondary flex-1">Cancel</button>
+            <button onClick={handleAddChapter} disabled={!newChapterName.trim() || adding} className="btn-primary flex-1">{adding ? 'Adding…' : 'Add Chapter'}</button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Topics status */}
       {selectedChapter && chapterTopics.length > 0 && (

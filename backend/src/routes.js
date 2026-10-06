@@ -25,6 +25,7 @@ function mapMaterial(r) {
 function mapLesson(r) { return { id: r.id, childId: r.childId, day: r.day, date: r.date, subject: r.subject, topic: r.topic, chapter: r.chapter, status: r.status, homeworkDue: r.homeworkDue === 1 || r.homeworkDue === true, ...(r.notes ? { notes: r.notes } : {}) }; }
 function mapPaper(r) { return { id: r.id, childId: r.childId, subjectId: r.subjectId, title: r.title, config: parseJSON(r.config, {}), questions: parseJSON(r.questions, []), answerKey: parseJSON(r.answerKey, []), createdAt: r.createdAt, totalMarks: Number(r.totalMarks) }; }
 function mapAttempt(r) { return { id: r.id, questionPaperId: r.questionPaperId, childId: r.childId, answers: parseJSON(r.answers, []), score: Number(r.score), totalMarks: Number(r.totalMarks), completedAt: r.completedAt }; }
+function mapStudyPlan(r) { return { id: r.id, childId: r.childId, examId: r.examId, activities: parseJSON(r.activities, []), status: r.status }; }
 
 // ─── Children ──────────────────────────────────────────────────────────────────
 
@@ -251,6 +252,35 @@ router.post('/practice-attempts', async (req, res) => {
   await db.execute({ sql: `INSERT INTO practice_attempts (id, questionPaperId, childId, answers, score, totalMarks, completedAt) VALUES (?, ?, ?, ?, ?, ?, ?)`, args: [a.id, a.questionPaperId, a.childId, JSON.stringify(a.answers || []), a.score || 0, a.totalMarks || 0, a.completedAt] });
   const { rows } = await db.execute({ sql: 'SELECT * FROM practice_attempts WHERE id = ?', args: [a.id] });
   res.status(201).json(mapAttempt(row(rows[0])));
+});
+
+// ─── Study Plans ───────────────────────────────────────────────────────────────
+
+router.get('/study-plans', async (_, res) => {
+  const { rows } = await db.execute('SELECT * FROM study_plans');
+  res.json(rows.map(r => mapStudyPlan(row(r))));
+});
+
+router.post('/study-plans', async (req, res) => {
+  const p = req.body;
+  await db.execute({ sql: `INSERT INTO study_plans (id, childId, examId, activities, status) VALUES (?, ?, ?, ?, ?)`, args: [p.id, p.childId, p.examId, JSON.stringify(p.activities || []), p.status || 'active'] });
+  const { rows } = await db.execute({ sql: 'SELECT * FROM study_plans WHERE id = ?', args: [p.id] });
+  res.status(201).json(mapStudyPlan(row(rows[0])));
+});
+
+router.put('/study-plans/:id', async (req, res) => {
+  const { rows: existing } = await db.execute({ sql: 'SELECT * FROM study_plans WHERE id = ?', args: [req.params.id] });
+  if (!existing[0]) return res.status(404).json({ error: 'Not found' });
+  const e = row(existing[0]);
+  const p = req.body;
+  await db.execute({ sql: `UPDATE study_plans SET activities=?, status=? WHERE id=?`, args: [p.activities !== undefined ? JSON.stringify(p.activities) : e.activities, p.status ?? e.status, req.params.id] });
+  const { rows } = await db.execute({ sql: 'SELECT * FROM study_plans WHERE id = ?', args: [req.params.id] });
+  res.json(mapStudyPlan(row(rows[0])));
+});
+
+router.delete('/study-plans/:id', async (req, res) => {
+  await db.execute({ sql: 'DELETE FROM study_plans WHERE id = ?', args: [req.params.id] });
+  res.status(204).end();
 });
 
 export default router;

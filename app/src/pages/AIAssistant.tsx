@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Bot, Send, User, Loader, MessageCircle } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Bot, Send, User, Loader, Trash2 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { chatWithAssistant, answerFromMaterials } from '../services/aiService';
 
@@ -18,19 +18,63 @@ const SUGGESTIONS = [
   'What topics are pending for the next exam?',
 ];
 
+const CHAT_STORAGE_KEY = 'sanju_chat_history';
+const MAX_STORED_MESSAGES = 100;
+
+function storageKey(childId: string) {
+  return `${CHAT_STORAGE_KEY}_${childId}`;
+}
+
+function loadHistory(childId: string): Message[] {
+  try {
+    const raw = localStorage.getItem(storageKey(childId));
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveHistory(childId: string, msgs: Message[]) {
+  try {
+    // Keep only the last N messages to avoid unbounded storage growth
+    const trimmed = msgs.slice(-MAX_STORED_MESSAGES);
+    localStorage.setItem(storageKey(childId), JSON.stringify(trimmed));
+  } catch { /* quota exceeded — silently ignore */ }
+}
+
 export function AIAssistant() {
   const { selectedChild, getChildMaterials } = useApp();
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '0',
-      role: 'assistant',
-      text: `Hello! I'm your AI learning assistant${selectedChild ? ` for ${selectedChild.name}` : ''}. I can help you understand what to study, generate practice questions, explain concepts, or create a revision plan. What would you like help with today?`,
-      time: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-    },
-  ]);
+
+  const makeWelcome = (name?: string): Message => ({
+    id: '0',
+    role: 'assistant',
+    text: `Hello! I'm your AI learning assistant${name ? ` for ${name}` : ''}. I can help you understand what to study, generate practice questions, explain concepts, or create a revision plan. What would you like help with today?`,
+    time: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+  });
+
+  const [messages, setMessages] = useState<Message[]>(() => {
+    if (!selectedChild) return [makeWelcome()];
+    const history = loadHistory(selectedChild.id);
+    return history.length > 0 ? history : [makeWelcome(selectedChild.name)];
+  });
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const prevChildId = useRef(selectedChild?.id);
+
+  // When the selected child changes, load their history
+  useEffect(() => {
+    if (selectedChild?.id && selectedChild.id !== prevChildId.current) {
+      prevChildId.current = selectedChild.id;
+      const history = loadHistory(selectedChild.id);
+      setMessages(history.length > 0 ? history : [makeWelcome(selectedChild.name)]);
+    }
+  }, [selectedChild?.id]);
+
+  // Persist messages whenever they change (skip if no child selected)
+  useEffect(() => {
+    if (selectedChild?.id) {
+      saveHistory(selectedChild.id, messages);
+    }
+  }, [messages, selectedChild?.id]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -59,10 +103,25 @@ export function AIAssistant() {
     }
   };
 
+  const clearHistory = useCallback(() => {
+    if (!selectedChild) return;
+    const welcome = [makeWelcome(selectedChild.name)];
+    setMessages(welcome);
+    saveHistory(selectedChild.id, welcome);
+  }, [selectedChild]);
+
   if (!selectedChild) return <div className="card text-center py-10 text-gray-500">Please select a child first.</div>;
 
   return (
     <div className="flex flex-col h-[calc(100vh-10rem)]">
+      {/* Header with clear button */}
+      <div className="flex items-center justify-between mb-3 flex-shrink-0">
+        <p className="text-xs text-gray-500">{messages.length - 1} message{messages.length !== 2 ? 's' : ''} in history</p>
+        <button onClick={clearHistory} className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 transition-colors" title="Clear chat history">
+          <Trash2 className="w-3.5 h-3.5" /> Clear
+        </button>
+      </div>
+
       {/* Chat messages */}
       <div className="flex-1 overflow-y-auto space-y-4 pb-4">
         {messages.map(msg => (

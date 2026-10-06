@@ -39,6 +39,9 @@ export function UploadMaterials() {
   const [processingStatus, setProcessingStatus] = useState('');
   const [error, setError] = useState('');
   const [previewMaterial, setPreviewMaterial] = useState<UploadedMaterial | null>(null);
+  // Ephemeral blob URL for the just-uploaded file — only valid for the current session.
+  // Stored separately so we never persist it to the DB / context state.
+  const [sessionBlobUrl, setSessionBlobUrl] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!selectedChild) {
@@ -98,12 +101,18 @@ export function UploadMaterials() {
       const structured = await analyzeExtractedText(rawText);
       setExtractedText(rawText);
 
+      // Create an in-memory blob URL for same-session preview only — do NOT persist it.
+      const blobUrl = fileType !== 'link' && selectedFile ? URL.createObjectURL(selectedFile) : '';
+      setSessionBlobUrl(blobUrl);
+
       const material: UploadedMaterial = {
         id: `mat-${Date.now()}`,
         childId: selectedChild.id,
         fileName: selectedFile?.name || linkUrl || 'web-content',
         fileType,
-        fileUrl: fileType === 'link' ? linkUrl : URL.createObjectURL(selectedFile!),
+        // For files: store empty string in DB — blob URLs are tab-session only and
+        // would be broken after any reload. Links store their permanent URL.
+        fileUrl: fileType === 'link' ? linkUrl : '',
         materialType: form.materialType,
         subject: form.subject,
         academicTerm: form.academicTerm,
@@ -119,17 +128,28 @@ export function UploadMaterials() {
       addMaterial(material);
 
       // ── Bridge: upsert subjects / chapters / topics into the study curriculum ──
-      if (structured.subjects.length > 0 && structured.subjects[0] !== 'Unknown') {
-        // Use the form-selected subject as the canonical name when the AI returns
-        // generic names, but prefer AI-detected subjects when they differ.
-        const subjectsToAdd = structured.subjects.length > 0 ? structured.subjects : [form.subject];
-        for (const subjectName of subjectsToAdd) {
-          const subjectId = upsertSubject(selectedChild.id, subjectName);
-          for (const chapterName of structured.chapters) {
-            const chapterId = upsertChapter(subjectId, chapterName);
-            for (const topicName of structured.topics) {
-              upsertTopic(chapterId, topicName);
-            }
+      //
+      // The form.subject (user-selected) is ALWAYS used as the canonical subject
+      // because the user explicitly told us what subject this material belongs to.
+      // AI-detected subjects are only used as extras when they're real names and
+      // differ from the form value (e.g. a multi-subject syllabus document).
+      const knownUnknown = (s: string) => !s || s === 'Unknown';
+      const formSubjectId = await upsertSubject(selectedChild.id, form.subject);
+
+      // Also upsert any AI-detected subjects that aren't 'Unknown' and differ from form.subject
+      const extraSubjects = structured.subjects.filter(
+        s => !knownUnknown(s) && s.toLowerCase() !== form.subject.toLowerCase()
+      );
+      const subjectIds = [formSubjectId, ...(
+        await Promise.all(extraSubjects.map(s => upsertSubject(selectedChild.id, s)))
+      )];
+
+      // Attach all detected chapters and topics to every subject above
+      for (const subjectId of subjectIds) {
+        for (const chapterName of structured.chapters) {
+          const chapterId = await upsertChapter(subjectId, chapterName);
+          for (const topicName of structured.topics) {
+            await upsertTopic(chapterId, topicName);
           }
         }
       }
@@ -148,6 +168,9 @@ export function UploadMaterials() {
     setExtractedText('');
     setProcessingStatus('');
     setError('');
+    // Revoke the blob URL to free browser memory
+    if (sessionBlobUrl) URL.revokeObjectURL(sessionBlobUrl);
+    setSessionBlobUrl('');
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -349,6 +372,18 @@ export function UploadMaterials() {
       <Modal open={!!previewMaterial} onClose={() => setPreviewMaterial(null)} title="Material Preview" maxWidth="max-w-2xl">
         {previewMaterial && (
           <div className="space-y-4">
+            {/* File preview — only available in same browser session for uploaded files */}
+            {previewMaterial.fileType === 'image' && sessionBlobUrl && (
+              <img src={sessionBlobUrl} alt={previewMaterial.fileName} className="w-full max-h-64 object-contain rounded-lg border border-gray-200 bg-gray-50" />
+            )}
+            {previewMaterial.fileType === 'link' && previewMaterial.fileUrl && (
+              <a href={previewMaterial.fileUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline break-all flex items-center gap-1">
+                <LinkIcon className="w-3.5 h-3.5 flex-shrink-0" /> {previewMaterial.fileUrl}
+              </a>
+            )}
+            {previewMaterial.fileType !== 'link' && !sessionBlobUrl && (
+              <p className="text-xs text-gray-400 italic">File preview not available after page reload — only extracted text is stored.</p>
+            )}
             <div className="grid sm:grid-cols-2 gap-2 text-sm">
               <div><span className="text-gray-500">Subject:</span> <span className="font-medium">{previewMaterial.subject}</span></div>
               <div><span className="text-gray-500">Type:</span> <span className="font-medium">{MATERIAL_TYPE_LABELS[previewMaterial.materialType]}</span></div>

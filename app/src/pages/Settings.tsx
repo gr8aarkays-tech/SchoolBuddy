@@ -4,6 +4,9 @@ import { useSettings } from '../contexts/SettingsContext';
 import { ENGINE_MODELS, initEngine, isModelCached, deleteModelCache, getLoadedModelId } from '../services/webllmEngine';
 import type { AIProvider } from '../types';
 
+// Settings storage key for the notifications flag
+const NOTIF_KEY = 'sanju_notifications_enabled';
+
 export function Settings() {
   const { settings, updateSettings } = useSettings();
   const [saved, setSaved] = useState(false);
@@ -13,7 +16,7 @@ export function Settings() {
     aiProvider: settings.aiProvider,
     apiKey: settings.apiKey,
     localModelId: settings.localModelId,
-    notifications: true,
+    notifications: localStorage.getItem(NOTIF_KEY) !== 'false',
   });
 
   // WebGPU / device capability (computed once on mount, not persisted)
@@ -81,6 +84,8 @@ export function Settings() {
       apiKey: draft.apiKey,
       localModelId: draft.localModelId,
     });
+    // Persist the notifications preference independently
+    localStorage.setItem(NOTIF_KEY, String(draft.notifications));
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };

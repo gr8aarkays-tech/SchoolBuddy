@@ -446,7 +446,9 @@ function mockAnalyze(text: string): ExtractedContent {
   if (lower.includes('math')) subjects.push('Mathematics');
   if (lower.includes('english')) subjects.push('English');
   if (lower.includes('evs') || lower.includes('plant')) subjects.push('EVS');
-  if (lower.includes('hindi')) subjects.push('Hindi');
+  if (lower.includes('hindi') || lower.includes('हिन्दी') || lower.includes('हिंदी')) subjects.push('Hindi');
+  if (lower.includes('kannada') || lower.includes('ಕನ್ನಡ')) subjects.push('Kannada');
+  if (lower.includes('telugu') || lower.includes('తెలుగు')) subjects.push('Telugu');
   if (lower.includes('science')) subjects.push('Science');
   if (lower.includes('social')) subjects.push('Social Studies');
 

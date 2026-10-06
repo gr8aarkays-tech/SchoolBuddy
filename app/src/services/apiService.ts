@@ -7,10 +7,18 @@
 // In production (GitHub Pages): VITE_API_URL = https://your-backend.onrender.com
 const BASE = (import.meta.env.VITE_API_URL ?? '') + '/api';
 
+// Must match the API_SECRET set on the backend (Render env var).
+// Leave blank in dev when the backend is running without API_SECRET.
+const API_SECRET = import.meta.env.VITE_API_SECRET ?? '';
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (body) headers['Content-Type'] = 'application/json';
+  if (API_SECRET) headers['Authorization'] = `Bearer ${API_SECRET}`;
+
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   if (res.status === 204) return undefined as T;
@@ -72,4 +80,10 @@ export const api = {
   // Practice attempts
   getPracticeAttempts: () => request<import('../types').PracticeAttempt[]>('GET', '/practice-attempts'),
   createPracticeAttempt: (data: import('../types').PracticeAttempt) => request<import('../types').PracticeAttempt>('POST', '/practice-attempts', data),
+
+  // Study plans
+  getStudyPlans: () => request<import('../types').StudyPlan[]>('GET', '/study-plans'),
+  createStudyPlan: (data: import('../types').StudyPlan) => request<import('../types').StudyPlan>('POST', '/study-plans', data),
+  updateStudyPlan: (id: string, data: Partial<import('../types').StudyPlan>) => request<import('../types').StudyPlan>('PUT', `/study-plans/${id}`, data),
+  deleteStudyPlan: (id: string) => request<void>('DELETE', `/study-plans/${id}`),
 };

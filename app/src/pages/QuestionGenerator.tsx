@@ -36,6 +36,7 @@ export function QuestionGenerator() {
     useTextbookTerminology: true,
     childFriendlyLanguage: true,
   });
+  const [paperTitle, setPaperTitle] = useState('');
   const [generating, setGenerating] = useState(false);
   const [generatedPaper, setGeneratedPaper] = useState<GeneratedQuestionPaper | null>(null);
   const [viewingPaper, setViewingPaper] = useState<GeneratedQuestionPaper | null>(null);
@@ -112,11 +113,12 @@ export function QuestionGenerator() {
         questions = await generateQuestionPaper(fullConfig);
       }
 
+      const autoTitle = `${config.subject} – Practice Paper${mats.length > 0 ? ' (from uploaded material)' : ''}`;
       const paper: GeneratedQuestionPaper = {
         id: `qp-${Date.now()}`,
         childId: selectedChild.id,
         subjectId: selectedSubjectObj?.id || '',
-        title: `${config.subject} – Practice Paper${mats.length > 0 ? ' (from uploaded material)' : ''}`,
+        title: paperTitle.trim() || autoTitle,
         config: {
           childId: selectedChild.id, subject: config.subject!, sourceChapters: config.sourceChapters || [],
           difficulty: config.difficulty || 'mixed', questionTypes: config.questionTypes || [],
@@ -299,6 +301,16 @@ export function QuestionGenerator() {
         <div className="card">
           <SectionHeader title="Step 5: Additional Options" />
           <div className="space-y-3">
+            <div>
+              <label className="label">Paper Title (optional — leave blank for auto)</label>
+              <input
+                type="text"
+                className="input"
+                placeholder={`${config.subject || 'Subject'} – Practice Paper`}
+                value={paperTitle}
+                onChange={e => setPaperTitle(e.target.value)}
+              />
+            </div>
             {(Object.entries({
               includeAnswers: 'Include answer key',
               includeExplanations: 'Include explanations',
@@ -360,11 +372,29 @@ export function QuestionGenerator() {
 function QuestionPaperView({ paper, onBack, isNew }: { paper: GeneratedQuestionPaper; onBack: () => void; isNew?: boolean }) {
   const [showAnswers, setShowAnswers] = useState(false);
 
-  const groupedQuestions = paper.config.questionTypes.reduce((acc, qt) => {
-    const qs = paper.questions.filter(q => q.type === qt.type);
-    if (qs.length > 0) acc.push({ label: qt.label, marks: qt.marks, questions: qs });
-    return acc;
-  }, [] as { label: string; marks: number; questions: typeof paper.questions }[]);
+  // Group by config.questionTypes when available; fall back to grouping by the question's own type
+  // (needed for papers generated from uploaded text, which have no pre-defined type config)
+  const groupedQuestions = (() => {
+    if (paper.config.questionTypes?.length) {
+      return paper.config.questionTypes.reduce((acc, qt) => {
+        const qs = paper.questions.filter(q => q.type === qt.type);
+        if (qs.length > 0) acc.push({ label: qt.label, marks: qt.marks, questions: qs });
+        return acc;
+      }, [] as { label: string; marks: number; questions: typeof paper.questions }[]);
+    }
+    // Fallback: derive sections from the questions themselves
+    const byType = new Map<string, typeof paper.questions>();
+    for (const q of paper.questions) {
+      const key = q.type;
+      if (!byType.has(key)) byType.set(key, []);
+      byType.get(key)!.push(q);
+    }
+    return Array.from(byType.entries()).map(([type, qs]) => ({
+      label: QUESTION_TYPE_LABELS[type as import('../types').QuestionType] ?? type,
+      marks: qs[0].marks,
+      questions: qs,
+    }));
+  })();
 
   return (
     <div className="space-y-4 print:space-y-2">

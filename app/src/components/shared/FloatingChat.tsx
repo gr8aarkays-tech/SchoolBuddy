@@ -1,11 +1,25 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, X, Loader, ChevronDown, Sparkles } from 'lucide-react';
-import { DotLottieReact } from '@lottiefiles/dotlottie-react';
 import { useApp } from '../../contexts/AppContext';
 import { chatWithAssistant } from '../../services/aiService';
 
-// LottieFiles: Robot Says Hi — https://lottiefiles.com/free-animation/robot-says-hi-9kNmfFz2s8
-const ROBOT_LOTTIE_SRC = 'https://assets3.lottiefiles.com/packages/lf20_9kNmfFz2s8.json';
+// Inline SVG robot avatar — works offline, no external dependency.
+function RobotIcon({ size = 36 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect x="10" y="12" width="16" height="14" rx="3" fill="white" fillOpacity="0.9"/>
+      <rect x="13" y="16" width="4" height="4" rx="1" fill="currentColor" opacity="0.7"/>
+      <rect x="19" y="16" width="4" height="4" rx="1" fill="currentColor" opacity="0.7"/>
+      <rect x="16" y="22" width="4" height="2" rx="1" fill="currentColor" opacity="0.5"/>
+      <rect x="17" y="8" width="2" height="4" rx="1" fill="white" fillOpacity="0.8"/>
+      <circle cx="18" cy="7" r="2" fill="white" fillOpacity="0.8"/>
+      <rect x="6" y="16" width="3" height="6" rx="1.5" fill="white" fillOpacity="0.7"/>
+      <rect x="27" y="16" width="3" height="6" rx="1.5" fill="white" fillOpacity="0.7"/>
+      <rect x="13" y="26" width="4" height="4" rx="1.5" fill="white" fillOpacity="0.7"/>
+      <rect x="19" y="26" width="4" height="4" rx="1.5" fill="white" fillOpacity="0.7"/>
+    </svg>
+  );
+}
 
 interface Message {
   id: string;
@@ -145,15 +159,10 @@ export function FloatingChat({ currentPage }: FloatingChatProps) {
         <button
           onClick={handleOpen}
           className="fixed bottom-5 right-5 z-50 w-16 h-16 rounded-full shadow-2xl flex items-center justify-center transition-all hover:scale-110 active:scale-95 overflow-hidden"
-          style={{ backgroundColor: 'var(--color-primary)' }}
+          style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary)' }}
           aria-label="Open AI Assistant"
         >
-          <DotLottieReact
-            src={ROBOT_LOTTIE_SRC}
-            loop
-            autoplay
-            style={{ width: 52, height: 52 }}
-          />
+          <RobotIcon size={40} />
           {unread > 0 && (
             <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-white text-[10px] font-bold">
               {unread}
@@ -181,15 +190,10 @@ export function FloatingChat({ currentPage }: FloatingChatProps) {
           {/* Header */}
           <div
             className="flex items-center gap-2 px-3 py-2.5 flex-shrink-0"
-            style={{ backgroundColor: 'var(--color-primary)' }}
+            style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary)' }}
           >
-            <div className="w-9 h-9 bg-white/20 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden">
-              <DotLottieReact
-                src={ROBOT_LOTTIE_SRC}
-                loop
-                autoplay
-                style={{ width: 36, height: 36 }}
-              />
+            <div className="w-9 h-9 bg-white/20 rounded-full flex items-center justify-center flex-shrink-0">
+              <RobotIcon size={32} />
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-white leading-tight">AI Assistant</p>
