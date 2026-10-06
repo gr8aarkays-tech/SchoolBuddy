@@ -26,7 +26,7 @@ export function UploadMaterials() {
   const { selectedChild, addMaterial, getChildMaterials, deleteMaterial, upsertSubject, upsertChapter, upsertTopic } = useApp();
   const [step, setStep] = useState<UploadStep>('select');
   const [fileType, setFileType] = useState<'image' | 'pdf' | 'link'>('image');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [linkUrl, setLinkUrl] = useState('');
   const [form, setForm] = useState<UploadForm>({
     subject: 'Mathematics',
@@ -54,25 +54,25 @@ export function UploadMaterials() {
   const materials = getChildMaterials(selectedChild.id);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const isPdf = file.type === 'application/pdf';
-    const isImage = file.type.startsWith('image/');
-    if (!isPdf && !isImage) {
-      setError('Please select a JPG, PNG, WEBP image or a PDF file.');
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    const isPdf = files[0].type === 'application/pdf';
+    const valid = files.filter(f => isPdf ? f.type === 'application/pdf' : f.type.startsWith('image/'));
+    if (valid.length === 0) {
+      setError('Please select valid JPG, PNG, WEBP images or PDF files.');
       return;
     }
     setFileType(isPdf ? 'pdf' : 'image');
-    setSelectedFile(file);
+    setSelectedFiles(valid);
     setStep('metadata');
     setError('');
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      const fakeEvent = { target: { files: e.dataTransfer.files } } as unknown as React.ChangeEvent<HTMLInputElement>;
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      const fakeEvent = { target: { files } } as unknown as React.ChangeEvent<HTMLInputElement>;
       handleFileSelect(fakeEvent);
     }
   };
@@ -98,29 +98,46 @@ export function UploadMaterials() {
       else if (subLower.includes('telugu')) preferredLang = 'tel';
       else if (subLower.includes('hindi') || subLower.includes('sanskrit')) preferredLang = 'hin';
 
-      if (fileType === 'image' && selectedFile) {
-        rawText = await extractTextFromImage(selectedFile);
-      } else if (fileType === 'pdf' && selectedFile) {
+      if (fileType === 'image' && selectedFiles.length > 0) {
+        const textParts: string[] = [];
+        for (let i = 0; i < selectedFiles.length; i++) {
+          setProcessingStatus(`Extracting text from image ${i + 1} of ${selectedFiles.length}…`);
+          const t = await extractTextFromImage(selectedFiles[i], preferredLang);
+          if (t) textParts.push(t);
+        }
+        rawText = textParts.join('\n\n');
+      } else if (fileType === 'pdf' && selectedFiles.length > 0) {
         setProcessingStatus('Extracting text from PDF… (scanned or Indian language pages may take a moment)');
-        rawText = await extractTextFromPdf(selectedFile, preferredLang);
+        const textParts: string[] = [];
+        for (const f of selectedFiles) {
+          const t = await extractTextFromPdf(f, preferredLang);
+          if (t) textParts.push(t);
+        }
+        rawText = textParts.join('\n\n');
       } else if (fileType === 'link') {
         setProcessingStatus('Fetching content from URL…');
         rawText = await extractContentFromUrl(linkUrl, preferredLang);
       }
 
       setProcessingStatus('Analyzing content with AI…');
-      const structured = await analyzeExtractedText(rawText);
+      const structured = await analyzeExtractedText(rawText, form.subject);
       setExtractedText(rawText);
       setLastStructured(structured);
 
       // Create an in-memory blob URL for same-session preview only — do NOT persist it.
-      const blobUrl = fileType !== 'link' && selectedFile ? URL.createObjectURL(selectedFile) : '';
+      const blobUrl = fileType !== 'link' && selectedFiles.length > 0 ? URL.createObjectURL(selectedFiles[0]) : '';
       setSessionBlobUrl(blobUrl);
+
+      const firstFileName = selectedFiles.length === 1
+        ? selectedFiles[0].name
+        : selectedFiles.length > 1
+        ? `${selectedFiles[0].name} (+${selectedFiles.length - 1} more)`
+        : linkUrl || 'web-content';
 
       const material: UploadedMaterial = {
         id: `mat-${Date.now()}`,
         childId: selectedChild.id,
-        fileName: selectedFile?.name || linkUrl || 'web-content',
+        fileName: firstFileName,
         fileType,
         // For files: store empty string in DB — blob URLs are tab-session only and
         // would be broken after any reload. Links store their permanent URL.
@@ -175,7 +192,7 @@ export function UploadMaterials() {
 
   const handleReset = () => {
     setStep('select');
-    setSelectedFile(null);
+    setSelectedFiles([]);
     setLinkUrl('');
     setExtractedText('');
     setProcessingStatus('');
@@ -240,6 +257,7 @@ export function UploadMaterials() {
                 <input
                   ref={fileInputRef}
                   type="file"
+                  multiple
                   accept={fileType === 'image' ? 'image/jpeg,image/png,image/webp' : 'application/pdf'}
                   className="hidden"
                   onChange={handleFileSelect}
@@ -267,7 +285,13 @@ export function UploadMaterials() {
             <div className="flex items-center gap-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
               <FileText className="w-5 h-5 text-blue-600 flex-shrink-0" />
               <div className="min-w-0">
-                <p className="text-sm font-medium text-gray-900 truncate">{selectedFile?.name || linkUrl}</p>
+                <p className="text-sm font-medium text-gray-900 truncate">
+                  {selectedFiles.length === 1
+                    ? selectedFiles[0].name
+                    : selectedFiles.length > 1
+                    ? `${selectedFiles.length} files selected (${selectedFiles.map(f => f.name).join(', ')})`
+                    : linkUrl}
+                </p>
                 <p className="text-xs text-gray-500">{fileType.toUpperCase()}</p>
               </div>
               <button onClick={handleReset} className="ml-auto text-gray-400 hover:text-red-500"><X className="w-4 h-4" /></button>

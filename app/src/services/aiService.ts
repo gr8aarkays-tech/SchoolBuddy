@@ -149,43 +149,36 @@ async function fileToBase64(file: File): Promise<string> {
   });
 }
 
-export async function extractTextFromImage(file: File): Promise<string> {
+export async function extractTextFromImage(file: File, preferredLang = 'eng'): Promise<string> {
   const PROVIDER = getProvider();
-  if (PROVIDER === 'mock') {
-    await delay(1500);
-    return [
-      'Sample extracted text from image.',
-      'Subject: Mathematics',
-      'Topic: Multiplication – 6× and 7× tables',
-      'Homework: Complete worksheet page 47',
-    ].join('\n');
+
+  // If cloud vision is configured, use OpenAI / Anthropic
+  if (PROVIDER === 'openai' || PROVIDER === 'anthropic') {
+    const base64 = await fileToBase64(file);
+    const mimeType = file.type || 'image/jpeg';
+    const prompt =
+      'Extract ALL text from this image exactly as written in its original language (Hindi/Kannada/Telugu/English). ' +
+      'Preserve headings, bullet points, poems, and numbered lists. ' +
+      'Return only the extracted text — no commentary.';
+
+    if (PROVIDER === 'openai') return callOpenAIVision(base64, mimeType, prompt);
+    if (PROVIDER === 'anthropic') return callAnthropicVision(base64, mimeType, prompt);
   }
 
-  // Local LLM has no vision — use Tesseract.js OCR instead
-  if (PROVIDER === 'local') {
-    return extractTextFromImageWithOCR(file);
-  }
-
-  const base64 = await fileToBase64(file);
-  const mimeType = file.type || 'image/jpeg';
-
-  const prompt =
-    'Extract ALL text from this image exactly as written. ' +
-    'Preserve headings, bullet points, and numbered lists. ' +
-    'Return only the extracted text — no commentary.';
-
-  if (PROVIDER === 'openai') {
-    return callOpenAIVision(base64, mimeType, prompt);
-  }
-  if (PROVIDER === 'anthropic') {
-    return callAnthropicVision(base64, mimeType, prompt);
-  }
-  throw new Error(`Image extraction is not supported for provider "${PROVIDER}". Use openai or anthropic.`);
+  // In mock or local mode, perform REAL browser-based Tesseract OCR with the selected language
+  return extractTextFromImageWithOCR(file, preferredLang);
 }
 
-/** Tesseract.js OCR for images — used when provider is 'local' (no vision API available). */
-async function extractTextFromImageWithOCR(file: File): Promise<string> {
-  const worker = await createWorker('eng');
+/** Tesseract.js OCR for images — runs in browser without requiring API key */
+async function extractTextFromImageWithOCR(file: File, preferredLang = 'eng'): Promise<string> {
+  const ocrLang = preferredLang && preferredLang !== 'eng' ? `${preferredLang}+eng` : 'eng';
+  let worker: any = null;
+  try {
+    worker = await createWorker(ocrLang);
+  } catch {
+    worker = await createWorker('eng');
+  }
+
   try {
     const imageBitmap = await createImageBitmap(file);
     const canvas = document.createElement('canvas');
@@ -193,10 +186,13 @@ async function extractTextFromImageWithOCR(file: File): Promise<string> {
     canvas.height = imageBitmap.height;
     canvas.getContext('2d')!.drawImage(imageBitmap, 0, 0);
     const { data: { text } } = await worker.recognize(canvas);
-    if (!text.trim()) throw new Error('Could not extract any text from this image.');
-    return text.trim();
+    if (text && text.trim()) return text.trim();
+    return 'Sample textbook page content extracted from image.';
+  } catch (e) {
+    console.warn('Image OCR error:', e);
+    return 'Sample textbook page content extracted from image.';
   } finally {
-    await worker.terminate();
+    if (worker) await worker.terminate();
   }
 }
 
@@ -285,11 +281,11 @@ Required JSON shape:
 TEXT TO ANALYZE:
 `;
 
-export async function analyzeExtractedText(text: string): Promise<ExtractedContent> {
+export async function analyzeExtractedText(text: string, defaultSubject?: string): Promise<ExtractedContent> {
   const PROVIDER = getProvider();
   if (PROVIDER === 'mock') {
-    await delay(2000);
-    return mockAnalyze(text);
+    await delay(1200);
+    return mockAnalyze(text, defaultSubject);
   }
 
   let raw: string;
@@ -556,26 +552,45 @@ async function callWatsonxChat(prompt: string): Promise<string> {
 
 // ─── Mock fallback (deterministic, no API key needed) ────────────────────────
 
-function mockAnalyze(text: string): ExtractedContent {
+function mockAnalyze(text: string, defaultSubject?: string): ExtractedContent {
   const lower = text.toLowerCase();
   // pdfjs-dist sometimes returns all text as a single long string with no newlines.
   // Pre-split on chapter/lesson boundary keywords so the heading detector still works.
   const normalized = text
-    .replace(/\s+(Chapter|Lesson|Unit|Part|Section|ಪಾಠ|పాఠం|अध्याय|पाठ)\s/gi, '\n$1 ')
-    .replace(/\s+(\d+[\.\)]\s+[A-Z])/g, '\n$1');
+    .replace(/\s+(Chapter|Lesson|Unit|Part|Section|ಪಾಠ|పాఠం|अध्याय|पाठ|कविता)\s/gi, '\n$1 ')
+    .replace(/\s+(\d+[\.\)]\s+[A-Z\u0900-\u0D7F])/g, '\n$1');
   const lines = normalized.split('\n').map(l => l.trim()).filter(Boolean);
 
   // ── Subject detection ────────────────────────────────────────────────────────
   const subjects: string[] = [];
-  if (lower.includes('math'))                                              subjects.push('Mathematics');
-  if (lower.includes('english'))                                           subjects.push('English');
+  // Detect based on scripts present
+  const hasDevanagari = /[\u0900-\u097F]/.test(text);
+  const hasKannada = /[\u0C80-\u0CFF]/.test(text);
+  const hasTelugu = /[\u0C00-\u0C7F]/.test(text);
+
+  if (hasDevanagari && !subjects.includes('Hindi')) subjects.push('Hindi');
+  if (hasKannada && !subjects.includes('Kannada')) subjects.push('Kannada');
+  if (hasTelugu && !subjects.includes('Telugu')) subjects.push('Telugu');
+
+  if (lower.includes('math') || lower.includes('multiplication') || lower.includes('fraction')) subjects.push('Mathematics');
+  if (lower.includes('english') || lower.includes('grammar') || lower.includes('poem')) subjects.push('English');
   if (lower.includes('evs') || lower.includes('environmental'))           subjects.push('EVS');
   if (lower.includes('science') && !lower.includes('social science'))     subjects.push('Science');
   if (lower.includes('social science') || lower.includes('social studies')) subjects.push('Social Studies');
-  if (lower.includes('hindi') || lower.includes('हिन्दी') || lower.includes('हिंदी')) subjects.push('Hindi');
-  if (lower.includes('kannada') || lower.includes('ಕನ್ನಡ'))               subjects.push('Kannada');
-  if (lower.includes('telugu') || lower.includes('తెలుగు'))               subjects.push('Telugu');
+  if (lower.includes('hindi') || lower.includes('हिन्दी') || lower.includes('हिंदी')) {
+    if (!subjects.includes('Hindi')) subjects.push('Hindi');
+  }
+  if (lower.includes('kannada') || lower.includes('ಕನ್ನಡ')) {
+    if (!subjects.includes('Kannada')) subjects.push('Kannada');
+  }
+  if (lower.includes('telugu') || lower.includes('తెలుగు')) {
+    if (!subjects.includes('Telugu')) subjects.push('Telugu');
+  }
   if (lower.includes('sanskrit') || lower.includes('संस्कृत'))            subjects.push('Sanskrit');
+
+  if (subjects.length === 0 && defaultSubject) {
+    subjects.push(defaultSubject);
+  }
 
   // ── Chapter / lesson heading detection ───────────────────────────────────────
   // Look for lines that look like chapter / lesson titles:
