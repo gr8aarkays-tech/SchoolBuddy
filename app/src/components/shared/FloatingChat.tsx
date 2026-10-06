@@ -224,14 +224,9 @@ export function FloatingChat({ currentPage }: FloatingChatProps) {
                 {messages.map(msg => (
                   <div key={msg.id} className={`flex gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
                     {msg.role === 'assistant' && (
-                      <div className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center mt-0.5 overflow-hidden"
-                        style={{ backgroundColor: 'var(--color-primary-light)' }}>
-                        <DotLottieReact
-                          src={ROBOT_LOTTIE_SRC}
-                          loop
-                          autoplay
-                          style={{ width: 28, height: 28 }}
-                        />
+                      <div className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center mt-0.5"
+                        style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
+                        <RobotIcon size={22} />
                       </div>
                     )}
                     <div
@@ -250,14 +245,9 @@ export function FloatingChat({ currentPage }: FloatingChatProps) {
 
                 {loading && (
                   <div className="flex gap-2">
-                    <div className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center overflow-hidden"
-                      style={{ backgroundColor: 'var(--color-primary-light)' }}>
-                      <DotLottieReact
-                        src={ROBOT_LOTTIE_SRC}
-                        loop
-                        autoplay
-                        style={{ width: 28, height: 28 }}
-                      />
+                    <div className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center"
+                      style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
+                      <RobotIcon size={22} />
                     </div>
                     <div className="px-3 py-2 rounded-2xl rounded-tl-sm flex gap-1 items-center"
                       style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
