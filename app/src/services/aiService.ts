@@ -61,9 +61,26 @@ async function getPdfJs() {
   return pdfjsLib;
 }
 
-export async function extractTextFromPdf(file: File): Promise<string> {
+// Detect if extracted text appears to be corrupted legacy 8-bit Indic font (e.g., Nudi/Baraha/KrutiDev)
+// Characterised by a high density of non-ASCII Latin-1 characters (À, Ä, ª, £, §, ©, ®, etc.)
+// and an absence of standard Indic Unicode blocks (Kannada \u0C80-\u0CFF, Telugu \u0C00-\u0C7F, Devanagari \u0900-\u097F).
+export function isCorruptedIndicFont(text: string): boolean {
+  if (!text || text.length < 20) return false;
+  const sample = text.slice(0, 1500);
+  // Count Latin-1 high-byte accented/symbol characters common in Nudi/Baraha/KrutiDev
+  const latin1Matches = sample.match(/[\u00A0-\u00FF]/g) || [];
+  const latin1Ratio = latin1Matches.length / sample.length;
+  // Count native Unicode Indic characters
+  const indicMatches = sample.match(/[\u0900-\u0D7F]/g) || [];
+  const indicRatio = indicMatches.length / sample.length;
+
+  // If >8% of the text is Latin-1 symbols and <1% is proper Unicode Indic, it's legacy font encoding
+  return latin1Ratio > 0.08 && indicRatio < 0.01;
+}
+
+export async function extractTextFromPdf(fileOrBuffer: File | ArrayBuffer, preferredLang = 'eng'): Promise<string> {
   const pdfjsLib = await getPdfJs();
-  const arrayBuffer = await file.arrayBuffer();
+  const arrayBuffer = fileOrBuffer instanceof File ? await fileOrBuffer.arrayBuffer() : fileOrBuffer;
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
 
   const pageTexts: string[] = [];
@@ -79,15 +96,27 @@ export async function extractTextFromPdf(file: File): Promise<string> {
   }
 
   const fullText = pageTexts.join('\n\n');
-  if (fullText.trim()) return fullText;
 
-  // ── Scanned PDF fallback: render pages to canvas → Tesseract.js OCR ─────
-  // Tesseract.js runs entirely in the browser — no API key required.
-  const worker = await createWorker('eng');
+  // If text is present and NOT corrupted legacy font, return it
+  if (fullText.trim() && !isCorruptedIndicFont(fullText)) {
+    return fullText;
+  }
+
+  // ── Scanned PDF OR Legacy 8-bit Font fallback: render pages to canvas → Tesseract.js OCR ─────
+  // Tesseract.js runs in browser with multi-script support (kan, tel, hin, eng)
+  const ocrLang = preferredLang && preferredLang !== 'eng' ? `${preferredLang}+eng` : 'eng';
+  let worker: any = null;
+  try {
+    worker = await createWorker(ocrLang);
+  } catch {
+    // Fall back to English worker if specific language dictionary fails to load
+    worker = await createWorker('eng');
+  }
 
   try {
     const ocrTexts: string[] = [];
-    for (let i = 1; i <= pdf.numPages; i++) {
+    const maxPages = Math.min(pdf.numPages, 10); // OCR first 10 pages for speed/responsiveness
+    for (let i = 1; i <= maxPages; i++) {
       const page = await pdf.getPage(i);
       const viewport = page.getViewport({ scale: 2.0 }); // 2× scale = better OCR accuracy
       const canvas = document.createElement('canvas');
@@ -99,12 +128,12 @@ export async function extractTextFromPdf(file: File): Promise<string> {
       if (text.trim()) ocrTexts.push(text.trim());
     }
     const ocrFull = ocrTexts.join('\n\n');
-    if (!ocrFull.trim()) {
-      throw new Error('Could not extract any text from this PDF. The document may be blank or unreadable.');
-    }
-    return ocrFull;
+    if (ocrFull.trim()) return ocrFull;
+    // If OCR returned nothing but we had legacy text, return legacy text rather than failing
+    if (fullText.trim()) return fullText;
+    throw new Error('Could not extract any text from this PDF. The document may be blank or unreadable.');
   } finally {
-    await worker.terminate();
+    if (worker) await worker.terminate();
   }
 }
 
@@ -173,35 +202,65 @@ async function extractTextFromImageWithOCR(file: File): Promise<string> {
 
 // ─── URL / link extraction ────────────────────────────────────────────────────
 
-export async function extractContentFromUrl(url: string): Promise<string> {
-  const PROVIDER = getProvider();
-  if (PROVIDER === 'mock') {
-    await delay(1000);
-    return 'Sample educational content extracted from URL.';
+export async function extractContentFromUrl(url: string, preferredLang = 'eng'): Promise<string> {
+  // Check if URL is a direct PDF link
+  const isPdf = /\.pdf(\?.*)?$/i.test(url) || url.toLowerCase().includes('.pdf');
+
+  if (isPdf) {
+    try {
+      // First try direct fetch
+      let response = await fetch(url).catch(() => null);
+      if (!response || !response.ok) {
+        // Fall back to CORS raw proxy
+        const rawProxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+        response = await fetch(rawProxyUrl);
+      }
+      if (response && response.ok) {
+        const buffer = await response.arrayBuffer();
+        if (buffer && buffer.byteLength > 100) {
+          return await extractTextFromPdf(buffer, preferredLang);
+        }
+      }
+    } catch (e) {
+      console.warn('PDF download from URL failed, trying HTML extraction fallback:', e);
+    }
   }
 
-  // Use allorigins CORS proxy to fetch arbitrary URLs from the browser
-  const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-  const res = await fetch(proxyUrl);
-  if (!res.ok) throw new Error(`Could not fetch URL (HTTP ${res.status}). Check the URL and try again.`);
-  const json = await res.json();
-  const html: string = json.contents ?? '';
+  // HTML webpage fetch
+  try {
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+    const res = await fetch(proxyUrl);
+    if (res.ok) {
+      const json = await res.json();
+      const html: string = json.contents ?? '';
 
-  // Strip HTML tags, collapse whitespace
-  const text = html
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\s{3,}/g, '\n\n')
-    .trim();
+      // Strip HTML tags, collapse whitespace
+      const text = html
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/\s{3,}/g, '\n\n')
+        .trim();
 
-  if (!text) throw new Error('No readable text could be extracted from this URL.');
-  // Truncate to ~8000 chars to stay within token limits
-  return text.slice(0, 8000);
+      if (text.length > 30) {
+        return text.slice(0, 15000);
+      }
+    }
+  } catch (err) {
+    console.warn('URL extraction failed:', err);
+  }
+
+  // If mock provider is on and fetch had no output, return mock text with subject relevance
+  const PROVIDER = getProvider();
+  if (PROVIDER === 'mock') {
+    return 'Educational syllabus and textbook content with chapters, definitions, and practice exercises.';
+  }
+
+  throw new Error('Could not fetch readable text from this URL. Please verify the URL or upload the file directly.');
 }
 
 // ─── AI content analysis ──────────────────────────────────────────────────────
@@ -402,6 +461,66 @@ async function callAnthropicVision(base64: string, mimeType: string, prompt: str
   return data.content?.[0]?.text ?? '';
 }
 
+export async function testAIConnection(provider: AIProvider, apiKey: string): Promise<{ success: boolean; message: string }> {
+  if (provider === 'mock') {
+    return { success: true, message: 'Mock provider active (no key needed)' };
+  }
+  if (provider === 'local') {
+    const isSupported = !!navigator.gpu;
+    return isSupported
+      ? { success: true, message: 'WebGPU supported for on-device Local AI' }
+      : { success: false, message: 'WebGPU not available on this browser/GPU' };
+  }
+  if (!apiKey || !apiKey.trim()) {
+    return { success: false, message: 'API key cannot be empty' };
+  }
+
+  try {
+    if (provider === 'openai') {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey.trim()}` },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: 'Say OK' }],
+          max_tokens: 5,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        return { success: false, message: (err as any)?.error?.message || `HTTP ${res.status}` };
+      }
+      return { success: true, message: 'OpenAI connected successfully (gpt-4o-mini ready)' };
+    }
+
+    if (provider === 'anthropic') {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey.trim(),
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5',
+          max_tokens: 5,
+          messages: [{ role: 'user', content: 'Say OK' }],
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        return { success: false, message: (err as any)?.error?.message || `HTTP ${res.status}` };
+      }
+      return { success: true, message: 'Anthropic connected successfully (claude-haiku-4-5 ready)' };
+    }
+
+    return { success: false, message: `Testing for ${provider} not supported directly` };
+  } catch (e: any) {
+    return { success: false, message: e.message || 'Connection error' };
+  }
+}
+
 // ─── watsonx.ai ───────────────────────────────────────────────────────────────
 
 async function callWatsonxChat(prompt: string): Promise<string> {
@@ -465,22 +584,26 @@ function mockAnalyze(text: string): ExtractedContent {
   const chapterSet = new Set<string>();
   const chapterPatterns = [
     /^(chapter|lesson|unit|part|section)\s*[\d:–\-]*/i,
-    /^(ಪಾಠ|పాఠం|अध्याय|पाठ|অধ্যায়)\s*[\d:–\-]*/,  // Kannada/Telugu/Hindi/Sanskrit/Bengali "lesson/chapter"
-    /^\d+[\.\)]\s+[A-Za-z\u0C00-\u0C7F\u0C80-\u0CFF\u0900-\u097F]/,  // "1. Title" with letters or Kannada/Devanagari
+    /^(ಪಾಠ|ಪಾಠಗಳು|పాఠం|పాఠాలు|अध्याय|पाठ|प्रकरण)\s*[\d:–\-]*/i,  // Kannada/Telugu/Hindi/Sanskrit "lesson/chapter"
+    /^\d+[\.\)]\s+[\u0C80-\u0CFF\u0C00-\u0C7F\u0900-\u097FA-Za-z]/,  // "1. Title" with letters or Kannada/Telugu/Devanagari
   ];
 
   for (const line of lines) {
     if (line.length < 3 || line.length > 80) continue;
     // Skip lines that are just numbers, dots, or page markers
     if (/^[\d\s\.\-–]+$/.test(line)) continue;
-    // Skip very long sentences (paragraphs, not headings)
+    // Skip publisher boilerplate lines often found in textbooks
+    if (/NOT TO BE REPUBLISHED|GOVERNMENT OF|TEXTBOOK SOCIETY|STATE COUNCIL|ALL RIGHTS RESERVED/i.test(line)) continue;
+    // Skip lines with high density of Latin-1 corruption noise
+    if (isCorruptedIndicFont(line)) continue;
+
     const wordCount = line.split(/\s+/).length;
     if (wordCount > 12) continue;
 
     const isHeading =
       chapterPatterns.some(p => p.test(line)) ||
-      // ALL CAPS line (common for chapter titles in Indian textbooks)
-      (line === line.toUpperCase() && line.length > 4 && /[A-Za-z\u0C00-\u0CFF\u0900-\u097F]/.test(line));
+      // ALL CAPS English line (not corrupt symbols)
+      (line === line.toUpperCase() && line.length > 4 && /^[A-Z0-9\s:,\-\.]{4,}$/.test(line));
 
     if (isHeading && !chapterSet.has(line)) {
       chapterSet.add(line);
@@ -496,6 +619,8 @@ function mockAnalyze(text: string): ExtractedContent {
   for (const line of lines) {
     if (chapterSet.has(line)) { inChapterZone = true; continue; }
     if (!inChapterZone) continue;
+    if (isCorruptedIndicFont(line)) continue;
+    if (/NOT TO BE REPUBLISHED|GOVERNMENT OF|TEXTBOOK/i.test(line)) continue;
     const wordCount = line.split(/\s+/).length;
     if (wordCount >= 2 && wordCount <= 8 && line.length <= 60 && !/^[\d\s\.\-–]+$/.test(line)) {
       topicSet.add(line);
@@ -745,25 +870,25 @@ export function buildStudyGuideFromText(text: string, subject: string, chapterNa
   const lines = text
     .split('\n')
     .map(l => l.replace(/\s+/g, ' ').trim())
-    .filter(l => l.length > 4);
+    .filter(l => l.length > 3 && !isCorruptedIndicFont(l));
 
-  // Sentences: lines that look like real sentences (contain a space and end with punctuation or are long)
-  const sentences = lines.filter(l => l.includes(' ') && l.length > 15);
+  // Sentences: clean meaningful sentences
+  const sentences = lines.filter(l => l.length >= 15 && !/^[\d\.\-\*•\s]+$/.test(l));
 
-  // Key terms: short capitalised tokens or tokens followed by a colon / dash
-  const termPattern = /^([A-Z][A-Za-z\s]{2,30})[\s:–-]/;
+  // Key terms: Indic or English words followed by colon, dash or title case tokens
+  const termPattern = /^([\u0C80-\u0CFF\u0C00-\u0C7F\u0900-\u097FA-Za-z\s]{2,30})[\s:–-]/;
   const keyTerms: string[] = [];
   const seenTerms = new Set<string>();
   for (const line of lines) {
     const m = line.match(termPattern);
-    if (m && !seenTerms.has(m[1])) {
+    if (m && !seenTerms.has(m[1].trim()) && m[1].trim().length > 2) {
       keyTerms.push(m[1].trim());
       seenTerms.add(m[1].trim());
     }
   }
 
-  // Important points: numbered or bulleted lines
-  const pointPattern = /^[\d\u2022\-\*•]\s*[\.\):]?\s*(.+)/;
+  // Important points: numbered or bulleted lines, or strong topic sentences
+  const pointPattern = /^[\d\u2022\-\*•\(\)]\s*[\.\):]?\s*(.+)/;
   const importantPoints: string[] = [];
   for (const line of lines) {
     const m = line.match(pointPattern);
@@ -772,60 +897,62 @@ export function buildStudyGuideFromText(text: string, subject: string, chapterNa
     }
   }
 
-  // Definitions: lines containing " is ", " are ", " means ", " refers to "
-  const defPattern = /\b(is|are|means|refers to|defined as)\b/i;
+  // Definitions: lines containing definition keywords
+  const defPattern = /\b(is|are|means|refers to|defined as|ಅಂದರೆ|అనగా|कहते हैं)\b/i;
   const definitions: string[] = sentences.filter(s => defPattern.test(s)).slice(0, 5);
 
-  // What to read: first few meaningful sentences as reading pointers
+  // What to read: actual content excerpts from the material
   const whatToRead = sentences.slice(0, 6).length
     ? sentences.slice(0, 6)
-    : [`Read the complete material on ${chapterName}`, `Review all key terms in ${subject}`];
+    : [`Read the complete section on ${chapterName}`, `Review all key points and exercises in ${subject}`];
 
-  // What to highlight: key terms + definitions
-  const whatToHighlight = [
-    ...keyTerms.slice(0, 4).map(t => ({ item: t, reason: `Key term in ${subject}`, memorize: true })),
-    ...definitions.slice(0, 3).map(d => ({ item: d.slice(0, 80) + (d.length > 80 ? '…' : ''), reason: 'Definition — often asked in exams', memorize: true })),
+  // What to highlight: actual key terms + definitions
+  const highlightItems = [
+    ...keyTerms.slice(0, 5).map(t => ({ item: t, reason: `Important concept/term in ${chapterName}`, memorize: true })),
+    ...definitions.slice(0, 4).map(d => ({ item: d.length > 90 ? d.slice(0, 90) + '…' : d, reason: 'Key definition', memorize: true })),
   ];
 
-  // What to understand: definitions turned into concept cards
-  const whatToUnderstand = definitions.slice(0, 3).map(def => {
-    const parts = def.split(/\b(is|are|means|refers to|defined as)\b/i);
+  // What to understand: genuine concept explanations from the text
+  const whatToUnderstand = definitions.slice(0, 4).map(def => {
+    const parts = def.split(/\b(is|are|means|refers to|defined as|ಅಂದರೆ|అనగా|कहते हैं)\b/i);
+    const concept = parts[0]?.trim() || chapterName;
     return {
-      concept: parts[0]?.trim() || chapterName,
+      concept,
       explanation: def,
-      example: `Refer to textbook examples for ${parts[0]?.trim() || chapterName}`,
-      commonMistakes: ['Read the full sentence carefully before answering'],
+      example: `Review examples for "${concept}" in the uploaded material.`,
+      commonMistakes: ['Ensure you understand the full explanation rather than memorizing single words.'],
     };
   });
+
   if (whatToUnderstand.length === 0) {
     whatToUnderstand.push({
       concept: chapterName,
-      explanation: sentences[0] || `Study ${chapterName} from the uploaded material.`,
-      example: `Refer to textbook examples`,
-      commonMistakes: ['Do not skip diagrams or tables in the material'],
+      explanation: sentences[0] || `Focus on understanding the key concepts of ${chapterName} in ${subject}.`,
+      example: `Check diagrams, formulas, and practice problems in this section.`,
+      commonMistakes: ['Do not skip the summary and self-assessment points.'],
     });
   }
 
-  // What to practice
+  // What to practice: tailored to extracted terms & sentences
   const whatToPractice = [
-    `Write answers for all numbered questions found in the material`,
-    `Make your own notes listing key points from the uploaded document`,
-    ...(keyTerms.slice(0, 3).map(t => `Write the definition of: ${t}`)),
-    `Revise ${chapterName} using the extracted text above`,
+    `Summarize ${chapterName} in 5 bullet points in your notebook.`,
+    ...(keyTerms.slice(0, 3).map(t => `Explain the meaning of "${t}" in your own words.`)),
+    ...(definitions.slice(0, 2).map((_, i) => `Write the definition of key concept #${i + 1}.`)),
+    `Solve all questions at the end of this chapter.`,
   ];
 
   return {
     whatToRead,
-    whatToHighlight,
+    whatToHighlight: highlightItems.length > 0 ? highlightItems : [{ item: chapterName, reason: 'Core chapter heading', memorize: true }],
     whatToUnderstand,
     whatToPractice,
     quickRevision: {
-      keyPoints: importantPoints.length ? importantPoints.slice(0, 6) : sentences.slice(0, 4),
-      importantWords: keyTerms.slice(0, 8),
+      keyPoints: importantPoints.length > 0 ? importantPoints.slice(0, 8) : sentences.slice(0, 5),
+      importantWords: keyTerms.length > 0 ? keyTerms.slice(0, 8) : [chapterName, subject],
       oralQuestions: [
-        `What is ${chapterName}?`,
-        ...keyTerms.slice(0, 3).map(t => `Explain: ${t}`),
-        `Write 3 important points from ${subject} – ${chapterName}`,
+        `What is the main topic of ${chapterName}?`,
+        ...keyTerms.slice(0, 3).map(t => `What do you know about ${t}?`),
+        `Give two key takeaways from ${chapterName}.`,
       ],
     },
   };

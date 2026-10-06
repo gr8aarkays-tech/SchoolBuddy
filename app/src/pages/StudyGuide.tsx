@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { BookOpen, ChevronDown, ChevronRight, Lightbulb, Eye, Pencil, Dumbbell, Zap, Loader, FileText, Plus } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { LoadingSpinner, StatusBadge, SectionHeader, Modal } from '../components/shared/UI';
@@ -6,6 +7,7 @@ import { generateStudyGuide, buildStudyGuideFromText, type StudyGuideSection } f
 import { STUDY_STATUS_LABELS } from '../types';
 
 export function StudyGuide() {
+  const location = useLocation();
   const { selectedChild, getChildSubjects, getSubjectChapters, getChapterTopics, updateTopic, getMaterialsForSubject, upsertSubject, upsertChapter } = useApp();
   const [selectedSubject, setSelectedSubject] = useState('');
   const [selectedChapter, setSelectedChapter] = useState('');
@@ -24,6 +26,25 @@ export function StudyGuide() {
   if (!selectedChild) return <div className="card text-center py-10 text-gray-500">Please select a child first.</div>;
 
   const subjects = getChildSubjects(selectedChild.id);
+
+  // Auto-select subject (and its first chapter) when navigated from Upload Materials
+  useEffect(() => {
+    const navState = location.state as { subjectName?: string; subjectId?: string; chapterId?: string } | null;
+    if (navState && subjects.length > 0) {
+      let targetSub = subjects.find(s => s.id === navState.subjectId);
+      if (!targetSub && navState.subjectName) {
+        targetSub = subjects.find(s => s.name.toLowerCase() === navState.subjectName!.toLowerCase());
+      }
+      if (targetSub && targetSub.id !== selectedSubject) {
+        setSelectedSubject(targetSub.id);
+        const chaps = getSubjectChapters(targetSub.id);
+        if (chaps.length > 0) {
+          const targetChap = navState.chapterId ? chaps.find(c => c.id === navState.chapterId) : chaps[0];
+          setSelectedChapter(targetChap?.id || chaps[0].id);
+        }
+      }
+    }
+  }, [location.state, subjects]);
 
   const handleAddSubject = async () => {
     const name = newSubjectName.trim();

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Key, Server, Shield, Bell, Download, Trash2, CheckCircle, AlertTriangle, Cpu } from 'lucide-react';
+import { Settings as SettingsIcon, Key, Server, Shield, Bell, Download, Trash2, CheckCircle, AlertTriangle, Cpu, Loader2 } from 'lucide-react';
 import { useSettings } from '../contexts/SettingsContext';
 import { ENGINE_MODELS, initEngine, isModelCached, deleteModelCache, getLoadedModelId } from '../services/webllmEngine';
+import { testAIConnection } from '../services/aiService';
 import type { AIProvider } from '../types';
 
 // Settings storage key for the notifications flag
@@ -10,6 +11,8 @@ const NOTIF_KEY = 'sanju_notifications_enabled';
 export function Settings() {
   const { settings, updateSettings } = useSettings();
   const [saved, setSaved] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // Local draft state — committed on Save
   const [draft, setDraft] = useState({
@@ -126,7 +129,24 @@ export function Settings() {
           {/* ── Cloud API key ──────────────────────────────────────── */}
           {(draft.aiProvider === 'openai' || draft.aiProvider === 'anthropic') && (
             <div>
-              <label className="label">API Key</label>
+              <div className="flex items-center justify-between">
+                <label className="label">API Key</label>
+                <button
+                  type="button"
+                  disabled={testingConnection || !draft.apiKey.trim()}
+                  onClick={async () => {
+                    setTestingConnection(true);
+                    setTestResult(null);
+                    const res = await testAIConnection(draft.aiProvider, draft.apiKey);
+                    setTestResult(res);
+                    setTestingConnection(false);
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1 disabled:opacity-50"
+                >
+                  {testingConnection ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                  Test Key Connection
+                </button>
+              </div>
               <div className="relative">
                 <Key className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
                 <input
@@ -134,9 +154,18 @@ export function Settings() {
                   className="input pl-9"
                   placeholder="Enter your API key"
                   value={draft.apiKey}
-                  onChange={e => setDraft(d => ({ ...d, apiKey: e.target.value }))}
+                  onChange={e => {
+                    setDraft(d => ({ ...d, apiKey: e.target.value }));
+                    setTestResult(null);
+                  }}
                 />
               </div>
+              {testResult && (
+                <div className={`mt-2 p-2 rounded text-xs flex items-center gap-1.5 ${testResult.success ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+                  {testResult.success ? <CheckCircle className="w-3.5 h-3.5 shrink-0" /> : <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
+                  <span>{testResult.message}</span>
+                </div>
+              )}
               <p className="text-xs text-gray-400 mt-1">API keys are stored only in your browser and never sent to our servers.</p>
             </div>
           )}

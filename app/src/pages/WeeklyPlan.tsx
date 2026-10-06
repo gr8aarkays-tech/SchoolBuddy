@@ -148,12 +148,28 @@ export function WeeklyPlan() {
           );
         })}
         {filtered.length === 0 && (
-          <div className="card text-center py-8 text-gray-400">
-            <Calendar className="w-10 h-10 mx-auto mb-2 opacity-40" />
-            {lessons.length === 0
-              ? <><p className="font-medium mb-2">No lessons yet</p><button onClick={() => setAddOpen(true)} className="btn-primary text-sm mx-auto">Add First Lesson</button></>
-              : <p>No lessons match the selected filters.</p>
-            }
+          <div className="card text-center py-12 text-gray-500">
+            <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto mb-4">
+              <Calendar className="w-8 h-8" />
+            </div>
+            {lessons.length === 0 ? (
+              <div className="max-w-md mx-auto space-y-3">
+                <h3 className="text-base font-semibold text-gray-900">No Weekly Lessons Scheduled</h3>
+                <p className="text-sm text-gray-500">
+                  Plan your child's weekly study routine by adding lessons and homework tracking across days of the week.
+                </p>
+                <div className="pt-2">
+                  <button onClick={() => setAddOpen(true)} className="btn-primary text-sm inline-flex items-center gap-2">
+                    <Plus className="w-4 h-4" /> Add First Lesson
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <p className="font-medium text-gray-700">No lessons match the selected filters.</p>
+                <p className="text-xs text-gray-400 mt-1">Try resetting the subject or status filter above.</p>
+              </div>
+            )}
           </div>
         )}
       </div>

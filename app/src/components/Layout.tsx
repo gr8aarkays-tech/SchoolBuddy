@@ -27,11 +27,23 @@ const navItems = [
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const { selectedChild, children: childList, selectChild } = useApp();
+  const { selectedChild, children: childList, selectChild, loading: appLoading } = useApp();
   const { user, logout } = useAuth();
   const [childDropdownOpen, setChildDropdownOpen] = useState(false);
+  const [slowConnecting, setSlowConnecting] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+
+  // Show cold-start backend connecting notice if API takes >1.5s
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    if (appLoading && user?.id !== 'user-demo') {
+      timer = setTimeout(() => setSlowConnecting(true), 1500);
+    } else {
+      setSlowConnecting(false);
+    }
+    return () => clearTimeout(timer);
+  }, [appLoading, user?.id]);
 
   // ── Fix 2: close child dropdown on outside click ──────────────────────────
   const childDropdownRef = useRef<HTMLDivElement>(null);
@@ -242,6 +254,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
             )}
           </div>
         </header>
+
+        {/* Cold-start notification banner for cloud backend */}
+        {slowConnecting && (
+          <div className="bg-amber-500 text-white px-4 py-2 text-xs flex items-center justify-center gap-2 shadow-sm animate-pulse">
+            <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+            <span>Connecting to cloud backend (free tier waking up, please wait a few seconds)…</span>
+          </div>
+        )}
 
         {/* Page */}
         <main className="flex-1 overflow-y-auto">

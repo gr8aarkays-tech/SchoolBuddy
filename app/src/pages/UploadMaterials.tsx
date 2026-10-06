@@ -91,13 +91,21 @@ export function UploadMaterials() {
       setProcessingStatus('Extracting text…');
       let rawText = '';
 
+      // Map subject name to preferred OCR language if Indic
+      const subLower = (form.subject || '').toLowerCase();
+      let preferredLang = 'eng';
+      if (subLower.includes('kannada')) preferredLang = 'kan';
+      else if (subLower.includes('telugu')) preferredLang = 'tel';
+      else if (subLower.includes('hindi') || subLower.includes('sanskrit')) preferredLang = 'hin';
+
       if (fileType === 'image' && selectedFile) {
         rawText = await extractTextFromImage(selectedFile);
       } else if (fileType === 'pdf' && selectedFile) {
-        setProcessingStatus('Extracting text from PDF… (scanned pages may take a moment)');
-        rawText = await extractTextFromPdf(selectedFile);
+        setProcessingStatus('Extracting text from PDF… (scanned or Indian language pages may take a moment)');
+        rawText = await extractTextFromPdf(selectedFile, preferredLang);
       } else if (fileType === 'link') {
-        rawText = await extractContentFromUrl(linkUrl);
+        setProcessingStatus('Fetching content from URL…');
+        rawText = await extractContentFromUrl(linkUrl, preferredLang);
       }
 
       setProcessingStatus('Analyzing content with AI…');
@@ -389,7 +397,7 @@ export function UploadMaterials() {
             <div className="flex gap-3">
               <button onClick={handleReset} className="btn-secondary flex-1">Upload Another</button>
               <button
-                onClick={() => navigate('/study-guide')}
+                onClick={() => navigate('/study-guide', { state: { subjectName: form.subject } })}
                 className="btn-primary flex-1 flex items-center justify-center gap-2"
               >
                 <BookOpen className="w-4 h-4" /> Go to Study Guide <ArrowRight className="w-4 h-4" />

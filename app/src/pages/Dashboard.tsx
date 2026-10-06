@@ -363,14 +363,20 @@ export function Dashboard() {
       </div>
 
       {/* ── Fun learning streak ──────────────────────────────────────────── */}
-      <div className="rounded-2xl p-4 flex items-center gap-4"
+      <div className="rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4"
         style={{ background: 'linear-gradient(135deg,#fdf4ff,#ede9fe)', border: '1px solid #ddd6fe' }}>
-        <span className="text-4xl">🔥</span>
-        <div className="flex-1">
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <span className="text-3xl sm:text-4xl">🔥</span>
+          <div className="flex-1 sm:hidden">
+            <p className="font-bold text-purple-900 leading-tight">Keep it up, {selectedChild.name}!</p>
+            <p className="text-xs text-purple-700">Every question counts! 🌟</p>
+          </div>
+        </div>
+        <div className="hidden sm:block flex-1">
           <p className="font-bold text-purple-900">Keep it up, {selectedChild.name}!</p>
           <p className="text-sm text-purple-700">Every question you practice brings you closer to the top! 🌟</p>
         </div>
-        <Link to="/practice" className="flex-shrink-0 px-4 py-2 rounded-xl font-semibold text-sm text-white"
+        <Link to="/practice" className="w-full sm:w-auto text-center flex-shrink-0 px-4 py-2 rounded-xl font-semibold text-sm text-white"
           style={{ backgroundColor: '#7c3aed' }}>
           Practice Now 💪
         </Link>
