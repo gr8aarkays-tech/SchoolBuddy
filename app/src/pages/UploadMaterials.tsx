@@ -1,9 +1,10 @@
 import React, { useState, useRef } from 'react';
-import { Upload, FileText, Link as LinkIcon, X, CheckCircle, AlertCircle, Loader, Eye } from 'lucide-react';
+import { Upload, FileText, Link as LinkIcon, X, CheckCircle, AlertCircle, Loader, Eye, BookOpen, ArrowRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useApp } from '../contexts/AppContext';
 import { Modal, LoadingSpinner, SectionHeader } from '../components/shared/UI';
 import { extractTextFromImage, extractTextFromPdf, extractContentFromUrl, analyzeExtractedText } from '../services/aiService';
-import type { UploadedMaterial, MaterialType } from '../types';
+import type { UploadedMaterial, MaterialType, ExtractedContent } from '../types';
 import { MATERIAL_TYPE_LABELS } from '../types';
 
 const SUBJECTS = ['Mathematics', 'English', 'EVS', 'Science', 'Social Studies', 'Hindi', 'Kannada', 'Telugu', 'All Subjects', 'Other'];
@@ -38,11 +39,13 @@ export function UploadMaterials() {
   const [extractedText, setExtractedText] = useState('');
   const [processingStatus, setProcessingStatus] = useState('');
   const [error, setError] = useState('');
+  const [lastStructured, setLastStructured] = useState<ExtractedContent | null>(null);
   const [previewMaterial, setPreviewMaterial] = useState<UploadedMaterial | null>(null);
   // Ephemeral blob URL for the just-uploaded file — only valid for the current session.
   // Stored separately so we never persist it to the DB / context state.
   const [sessionBlobUrl, setSessionBlobUrl] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
 
   if (!selectedChild) {
     return <div className="card text-center py-10 text-gray-500">Please select a child first.</div>;
@@ -100,6 +103,7 @@ export function UploadMaterials() {
       setProcessingStatus('Analyzing content with AI…');
       const structured = await analyzeExtractedText(rawText);
       setExtractedText(rawText);
+      setLastStructured(structured);
 
       // Create an in-memory blob URL for same-session preview only — do NOT persist it.
       const blobUrl = fileType !== 'link' && selectedFile ? URL.createObjectURL(selectedFile) : '';
@@ -168,6 +172,7 @@ export function UploadMaterials() {
     setExtractedText('');
     setProcessingStatus('');
     setError('');
+    setLastStructured(null);
     // Revoke the blob URL to free browser memory
     if (sessionBlobUrl) URL.revokeObjectURL(sessionBlobUrl);
     setSessionBlobUrl('');
@@ -311,17 +316,85 @@ export function UploadMaterials() {
         )}
 
         {step === 'done' && (
-          <div className="text-center py-8">
-            <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3" />
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">Material Processed!</h3>
-            <p className="text-sm text-gray-500 mb-4">Your material has been uploaded and analyzed by AI.</p>
+          <div className="py-6 space-y-4">
+            {/* Header */}
+            <div className="flex items-center gap-3">
+              <CheckCircle className="w-8 h-8 text-green-500 flex-shrink-0" />
+              <div>
+                <h3 className="text-base font-semibold text-gray-900">Material Processed!</h3>
+                <p className="text-xs text-gray-500">Uploaded and analysed — here's what was found:</p>
+              </div>
+            </div>
+
+            {/* What was extracted */}
+            {lastStructured && (
+              <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 space-y-2 text-left">
+                <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+                  <span>
+                    <span className="text-gray-500">Subject: </span>
+                    <strong>{form.subject}</strong>
+                  </span>
+                  <span>
+                    <span className="text-gray-500">Chapters found: </span>
+                    <strong className={lastStructured.chapters.length === 0 ? 'text-red-600' : 'text-green-700'}>
+                      {lastStructured.chapters.length}
+                    </strong>
+                  </span>
+                  <span>
+                    <span className="text-gray-500">Topics found: </span>
+                    <strong>{lastStructured.topics.length}</strong>
+                  </span>
+                </div>
+
+                {lastStructured.chapters.length > 0 ? (
+                  <div>
+                    <p className="text-xs font-medium text-gray-500 mb-1">Chapters added to Study Guide:</p>
+                    <div className="flex flex-wrap gap-1">
+                      {lastStructured.chapters.slice(0, 10).map(c => (
+                        <span key={c} className="badge-blue text-xs">{c}</span>
+                      ))}
+                      {lastStructured.chapters.length > 10 && (
+                        <span className="text-xs text-gray-400">+{lastStructured.chapters.length - 10} more</span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-2 bg-yellow-50 rounded-lg border border-yellow-200 text-xs text-yellow-800">
+                    ⚠ No chapters were automatically detected. Go to Study Guide and use the <strong>+</strong> button to add chapters manually — the uploaded text will then power the guide.
+                  </div>
+                )}
+
+                {lastStructured.topics.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-gray-500 mb-1">Topics:</p>
+                    <div className="flex flex-wrap gap-1">
+                      {lastStructured.topics.slice(0, 8).map(t => (
+                        <span key={t} className="badge-gray text-xs">{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Raw text collapsible */}
             {extractedText && (
-              <details className="text-left mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                <summary className="text-sm font-medium text-gray-700 cursor-pointer">View extracted text</summary>
-                <pre className="text-xs text-gray-600 mt-2 whitespace-pre-wrap">{extractedText}</pre>
+              <details className="text-left p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <summary className="text-sm font-medium text-gray-700 cursor-pointer">View extracted text ({extractedText.length.toLocaleString()} chars)</summary>
+                <pre className="text-xs text-gray-600 mt-2 whitespace-pre-wrap max-h-48 overflow-y-auto">{extractedText.slice(0, 3000)}{extractedText.length > 3000 ? '\n…(truncated)' : ''}</pre>
               </details>
             )}
-            <button onClick={handleReset} className="btn-primary">Upload Another</button>
+
+            {/* Actions */}
+            <div className="flex gap-3">
+              <button onClick={handleReset} className="btn-secondary flex-1">Upload Another</button>
+              <button
+                onClick={() => navigate('/study-guide')}
+                className="btn-primary flex-1 flex items-center justify-center gap-2"
+              >
+                <BookOpen className="w-4 h-4" /> Go to Study Guide <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         )}
 

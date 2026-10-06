@@ -439,42 +439,92 @@ async function callWatsonxChat(prompt: string): Promise<string> {
 
 function mockAnalyze(text: string): ExtractedContent {
   const lower = text.toLowerCase();
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+  // ── Subject detection ────────────────────────────────────────────────────────
   const subjects: string[] = [];
-  const chapters: string[] = [];
-  const topics: string[] = [];
-
-  if (lower.includes('math')) subjects.push('Mathematics');
-  if (lower.includes('english')) subjects.push('English');
-  if (lower.includes('evs') || lower.includes('plant')) subjects.push('EVS');
+  if (lower.includes('math'))                                              subjects.push('Mathematics');
+  if (lower.includes('english'))                                           subjects.push('English');
+  if (lower.includes('evs') || lower.includes('environmental'))           subjects.push('EVS');
+  if (lower.includes('science') && !lower.includes('social science'))     subjects.push('Science');
+  if (lower.includes('social science') || lower.includes('social studies')) subjects.push('Social Studies');
   if (lower.includes('hindi') || lower.includes('हिन्दी') || lower.includes('हिंदी')) subjects.push('Hindi');
-  if (lower.includes('kannada') || lower.includes('ಕನ್ನಡ')) subjects.push('Kannada');
-  if (lower.includes('telugu') || lower.includes('తెలుగు')) subjects.push('Telugu');
-  if (lower.includes('science')) subjects.push('Science');
-  if (lower.includes('social')) subjects.push('Social Studies');
+  if (lower.includes('kannada') || lower.includes('ಕನ್ನಡ'))               subjects.push('Kannada');
+  if (lower.includes('telugu') || lower.includes('తెలుగు'))               subjects.push('Telugu');
+  if (lower.includes('sanskrit') || lower.includes('संस्कृत'))            subjects.push('Sanskrit');
 
-  if (lower.includes('multiplication') || lower.includes('×')) chapters.push('Multiplication');
-  if (lower.includes('division') || lower.includes('÷')) chapters.push('Division');
-  if (lower.includes('fraction')) chapters.push('Fractions');
-  if (lower.includes('noun')) chapters.push('Nouns');
-  if (lower.includes('plant')) chapters.push('Plants Around Us');
+  // ── Chapter / lesson heading detection ───────────────────────────────────────
+  // Look for lines that look like chapter / lesson titles:
+  //   • short (≤ 60 chars), not pure numbers/punctuation
+  //   • start with "chapter", "lesson", "unit", "part", "ಪಾಠ", "పాఠం", "अध्याय", "पाठ", a digit, or ALL CAPS
+  const chapterSet = new Set<string>();
+  const chapterPatterns = [
+    /^(chapter|lesson|unit|part|section)\s*[\d:–\-]*/i,
+    /^(ಪಾಠ|పాఠం|अध्याय|पाठ|অধ্যায়)\s*[\d:–\-]*/,  // Kannada/Telugu/Hindi/Sanskrit/Bengali "lesson/chapter"
+    /^\d+[\.\)]\s+[A-Za-z\u0C00-\u0C7F\u0C80-\u0CFF\u0900-\u097F]/,  // "1. Title" with letters or Kannada/Devanagari
+  ];
 
-  if (lower.includes('table')) topics.push('Times tables');
-  if (lower.includes('word problem')) topics.push('Word problems');
-  if (lower.includes('parts of a plant')) topics.push('Parts of a plant');
+  for (const line of lines) {
+    if (line.length < 3 || line.length > 80) continue;
+    // Skip lines that are just numbers, dots, or page markers
+    if (/^[\d\s\.\-–]+$/.test(line)) continue;
+    // Skip very long sentences (paragraphs, not headings)
+    const wordCount = line.split(/\s+/).length;
+    if (wordCount > 12) continue;
 
+    const isHeading =
+      chapterPatterns.some(p => p.test(line)) ||
+      // ALL CAPS line (common for chapter titles in Indian textbooks)
+      (line === line.toUpperCase() && line.length > 4 && /[A-Za-z\u0C00-\u0CFF\u0900-\u097F]/.test(line));
+
+    if (isHeading && !chapterSet.has(line)) {
+      chapterSet.add(line);
+      if (chapterSet.size >= 20) break; // cap at 20 chapters
+    }
+  }
+
+  // ── Topic detection ───────────────────────────────────────────────────────────
+  // Topics are medium-length lines (2–8 words) that follow a chapter heading
+  // and aren't themselves headings.
+  const topicSet = new Set<string>();
+  let inChapterZone = false;
+  for (const line of lines) {
+    if (chapterSet.has(line)) { inChapterZone = true; continue; }
+    if (!inChapterZone) continue;
+    const wordCount = line.split(/\s+/).length;
+    if (wordCount >= 2 && wordCount <= 8 && line.length <= 60 && !/^[\d\s\.\-–]+$/.test(line)) {
+      topicSet.add(line);
+      if (topicSet.size >= 30) break;
+    }
+  }
+
+  // ── Important points — first meaningful sentences from the text ──────────────
+  const importantPoints: string[] = lines
+    .filter(l => l.split(/\s+/).length >= 6 && l.length <= 200)
+    .slice(0, 5);
+  if (importantPoints.length === 0) importantPoints.push('Review uploaded material carefully.');
+
+  // ── Homework / exam detection ─────────────────────────────────────────────────
   const homework = lower.includes('homework') || lower.includes('worksheet')
-    ? text.split('\n').find(l => l.toLowerCase().includes('homework') || l.toLowerCase().includes('worksheet'))
+    ? lines.find(l => /homework|worksheet/i.test(l))
+    : undefined;
+  const examName = lower.includes('examination') || lower.includes('exam')
+    ? lines.find(l => /exam(ination)?/i.test(l))?.slice(0, 80)
     : undefined;
 
+  const detectedChapters = Array.from(chapterSet);
+  const detectedTopics   = Array.from(topicSet);
+
   return {
-    subjects:        subjects.length ? subjects : ['Unknown'],
-    chapters:        chapters.length ? chapters : [],
-    topics:          topics.length   ? topics   : [],
+    subjects:        subjects.length ? subjects : [],
+    chapters:        detectedChapters,
+    topics:          detectedTopics,
     definitions:     [],
-    importantPoints: ['Review uploaded material carefully'],
+    importantPoints,
     homework:        homework || undefined,
-    confidenceScore: 0.8,
-    needsReview:     subjects.length === 0,
+    examName:        examName || undefined,
+    confidenceScore: subjects.length > 0 ? 0.75 : 0.5,
+    needsReview:     subjects.length === 0 || detectedChapters.length === 0,
   };
 }
 
