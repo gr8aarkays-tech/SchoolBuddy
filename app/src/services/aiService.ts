@@ -439,7 +439,12 @@ async function callWatsonxChat(prompt: string): Promise<string> {
 
 function mockAnalyze(text: string): ExtractedContent {
   const lower = text.toLowerCase();
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  // pdfjs-dist sometimes returns all text as a single long string with no newlines.
+  // Pre-split on chapter/lesson boundary keywords so the heading detector still works.
+  const normalized = text
+    .replace(/\s+(Chapter|Lesson|Unit|Part|Section|ಪಾಠ|పాఠం|अध्याय|पाठ)\s/gi, '\n$1 ')
+    .replace(/\s+(\d+[\.\)]\s+[A-Z])/g, '\n$1');
+  const lines = normalized.split('\n').map(l => l.trim()).filter(Boolean);
 
   // ── Subject detection ────────────────────────────────────────────────────────
   const subjects: string[] = [];
