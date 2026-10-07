@@ -97,9 +97,69 @@ const EMPTY_STATE: AppState = {
   studyPlans: [],
 };
 
+const USER_CACHE_PREFIX = 'sanju_user_data_';
+
+function loadCachedUserData(userId: string): Partial<AppState> | null {
+  try {
+    const raw = localStorage.getItem(`${USER_CACHE_PREFIX}${userId}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedUserData(userId: string, state: AppState) {
+  try {
+    const dataToCache = {
+      children: state.children,
+      selectedChild: state.selectedChild,
+      subjects: state.subjects,
+      chapters: state.chapters,
+      topics: state.topics,
+      exams: state.exams,
+      materials: state.materials,
+      weeklyLessons: state.weeklyLessons,
+      questionPapers: state.questionPapers,
+      practiceAttempts: state.practiceAttempts,
+      studyPlans: state.studyPlans,
+    };
+    localStorage.setItem(`${USER_CACHE_PREFIX}${userId}`, JSON.stringify(dataToCache));
+  } catch {
+    // ignore
+  }
+}
+
 export function AppProvider({ children: reactChildren }: { children: React.ReactNode }) {
   const { user } = useAuth();
-  const [state, setState] = useState<AppState>({ ...EMPTY_STATE, loading: true });
+  const [state, setState] = useState<AppState>(() => {
+    if (!user) return { ...EMPTY_STATE, loading: false };
+    if (user.id === DEMO_USER_ID) {
+      return {
+        ...EMPTY_STATE,
+        loading: false,
+        children: mockChildren,
+        selectedChild: mockChildren[0],
+        subjects: mockSubjects,
+        chapters: mockChapters,
+        topics: mockTopics,
+        exams: mockExams,
+        materials: mockMaterials,
+        weeklyLessons: mockWeeklyLessons,
+        questionPapers: [mockQuestionPaper],
+        practiceAttempts: mockPracticeAttempts,
+        studyPlans: [],
+      };
+    }
+    const cached = loadCachedUserData(user.id);
+    return cached ? { ...EMPTY_STATE, ...cached, loading: false } : { ...EMPTY_STATE, loading: true };
+  });
+
+  // Save to local cache on any state mutation for logged in user
+  useEffect(() => {
+    if (user && user.id !== DEMO_USER_ID && !state.loading) {
+      saveCachedUserData(user.id, state);
+    }
+  }, [state, user?.id]);
 
   // ─── Load data when user changes ──────────────────────────────────────────
   useEffect(() => {
@@ -127,8 +187,15 @@ export function AppProvider({ children: reactChildren }: { children: React.React
       return;
     }
 
-    // Real user: load from backend DB
-    setState(s => ({ ...s, loading: true }));
+    // Real user: Load from cache first if available
+    const cached = loadCachedUserData(user.id);
+    if (cached) {
+      setState(s => ({ ...s, ...cached, loading: false }));
+    } else {
+      setState(s => ({ ...s, loading: true }));
+    }
+
+    // Fetch from backend DB to sync latest
     Promise.all([
       api.getChildren(),
       api.getSubjects(),
@@ -141,22 +208,30 @@ export function AppProvider({ children: reactChildren }: { children: React.React
       api.getPracticeAttempts(),
       api.getStudyPlans(),
     ]).then(([children, subjects, chapters, topics, exams, materials, weeklyLessons, questionPapers, practiceAttempts, studyPlans]) => {
-      setState({
-        loading: false,
-        children,
-        selectedChild: children[0] ?? null,
-        subjects,
-        chapters,
-        topics,
-        exams,
-        materials,
-        weeklyLessons,
-        questionPapers,
-        practiceAttempts,
-        studyPlans,
+      setState(prev => {
+        // Merge fetched children with any local children not yet overwritten
+        const mergedChildren = children.length > 0 ? children : prev.children;
+        const currentSelected = prev.selectedChild && mergedChildren.some(c => c.id === prev.selectedChild?.id)
+          ? prev.selectedChild
+          : (mergedChildren[0] ?? null);
+
+        return {
+          loading: false,
+          children: mergedChildren,
+          selectedChild: currentSelected,
+          subjects: subjects.length > 0 ? subjects : prev.subjects,
+          chapters: chapters.length > 0 ? chapters : prev.chapters,
+          topics: topics.length > 0 ? topics : prev.topics,
+          exams: exams.length > 0 ? exams : prev.exams,
+          materials: materials.length > 0 ? materials : prev.materials,
+          weeklyLessons: weeklyLessons.length > 0 ? weeklyLessons : prev.weeklyLessons,
+          questionPapers: questionPapers.length > 0 ? questionPapers : prev.questionPapers,
+          practiceAttempts: practiceAttempts.length > 0 ? practiceAttempts : prev.practiceAttempts,
+          studyPlans: studyPlans.length > 0 ? studyPlans : prev.studyPlans,
+        };
       });
     }).catch(err => {
-      console.error('Failed to load data from API:', err);
+      console.warn('API sync failed, retaining local state:', err);
       setState(s => ({ ...s, loading: false }));
     });
   }, [user?.id]);
@@ -171,28 +246,39 @@ export function AppProvider({ children: reactChildren }: { children: React.React
 
   const addChild = useCallback(async (childData: Omit<Child, 'id' | 'userId'>) => {
     const newChild: Child = { ...childData, id: `child-${Date.now()}`, userId: user?.id ?? 'unknown' };
-    if (isDemo) {
-      setState(s => ({ ...s, children: [...s.children, newChild], selectedChild: s.selectedChild || newChild }));
-    } else {
-      const saved = await api.createChild(newChild);
-      setState(s => ({ ...s, children: [...s.children, saved], selectedChild: s.selectedChild || saved }));
+    // Optimistically add to UI immediately so user never experiences "nothing happening"
+    setState(s => ({
+      ...s,
+      children: [...s.children, newChild],
+      selectedChild: s.selectedChild || newChild,
+    }));
+
+    if (!isDemo) {
+      try {
+        const saved = await api.createChild(newChild);
+        setState(s => ({
+          ...s,
+          children: s.children.map(c => c.id === newChild.id ? saved : c),
+          selectedChild: s.selectedChild?.id === newChild.id ? saved : s.selectedChild,
+        }));
+      } catch (err) {
+        console.warn('API createChild failed (saved locally):', err);
+      }
     }
   }, [user?.id, isDemo]);
 
   const updateChild = useCallback(async (id: string, updates: Partial<Child>) => {
-    if (isDemo) {
-      setState(s => ({
-        ...s,
-        children: s.children.map(c => c.id === id ? { ...c, ...updates } : c),
-        selectedChild: s.selectedChild?.id === id ? { ...s.selectedChild, ...updates } : s.selectedChild,
-      }));
-    } else {
-      const saved = await api.updateChild(id, updates);
-      setState(s => ({
-        ...s,
-        children: s.children.map(c => c.id === id ? saved : c),
-        selectedChild: s.selectedChild?.id === id ? saved : s.selectedChild,
-      }));
+    setState(s => ({
+      ...s,
+      children: s.children.map(c => c.id === id ? { ...c, ...updates } : c),
+      selectedChild: s.selectedChild?.id === id ? { ...s.selectedChild, ...updates } : s.selectedChild,
+    }));
+    if (!isDemo) {
+      try {
+        await api.updateChild(id, updates);
+      } catch (err) {
+        console.warn('API updateChild failed (saved locally):', err);
+      }
     }
   }, [isDemo]);
 
@@ -206,11 +292,14 @@ export function AppProvider({ children: reactChildren }: { children: React.React
   }, [isDemo]);
 
   const addMaterial = useCallback(async (material: UploadedMaterial) => {
-    if (isDemo) {
-      setState(s => ({ ...s, materials: [material, ...s.materials] }));
-    } else {
-      const saved = await api.createMaterial(material);
-      setState(s => ({ ...s, materials: [saved, ...s.materials] }));
+    setState(s => ({ ...s, materials: [material, ...s.materials] }));
+    if (!isDemo) {
+      try {
+        const saved = await api.createMaterial(material);
+        setState(s => ({ ...s, materials: [saved, ...s.materials.filter(m => m.id !== material.id)] }));
+      } catch (err) {
+        console.warn('API createMaterial failed:', err);
+      }
     }
   }, [isDemo]);
 
@@ -261,11 +350,14 @@ export function AppProvider({ children: reactChildren }: { children: React.React
   }, [isDemo]);
 
   const addExam = useCallback(async (exam: Exam) => {
-    if (isDemo) {
-      setState(s => ({ ...s, exams: [...s.exams, exam] }));
-    } else {
-      const saved = await api.createExam(exam);
-      setState(s => ({ ...s, exams: [...s.exams, saved] }));
+    setState(s => ({ ...s, exams: [...s.exams, exam] }));
+    if (!isDemo) {
+      try {
+        const saved = await api.createExam(exam);
+        setState(s => ({ ...s, exams: [...s.exams.filter(e => e.id !== exam.id), saved] }));
+      } catch (err) {
+        console.warn('API createExam failed:', err);
+      }
     }
   }, [isDemo]);
 
@@ -322,13 +414,17 @@ export function AppProvider({ children: reactChildren }: { children: React.React
       color: SUBJECT_COLORS[name] || 'bg-gray-500',
     };
 
+    resultId = newSubject.id;
+    setState(s => ({ ...s, subjects: [...s.subjects, newSubject] }));
+
     if (!isDemo) {
-      const saved = await api.createSubject(newSubject);
-      resultId = saved.id;
-      setState(s => ({ ...s, subjects: [...s.subjects, saved] }));
-    } else {
-      resultId = newSubject.id;
-      setState(s => ({ ...s, subjects: [...s.subjects, newSubject] }));
+      try {
+        const saved = await api.createSubject(newSubject);
+        resultId = saved.id;
+        setState(s => ({ ...s, subjects: s.subjects.map(sub => sub.id === newSubject.id ? saved : sub) }));
+      } catch (err) {
+        console.warn('API createSubject failed (kept in state):', err);
+      }
     }
     return resultId;
   }, [isDemo]);
@@ -350,13 +446,17 @@ export function AppProvider({ children: reactChildren }: { children: React.React
       name,
     };
 
+    resultId = newChapter.id;
+    setState(s => ({ ...s, chapters: [...s.chapters, newChapter] }));
+
     if (!isDemo) {
-      const saved = await api.createChapter(newChapter);
-      resultId = saved.id;
-      setState(s => ({ ...s, chapters: [...s.chapters, saved] }));
-    } else {
-      resultId = newChapter.id;
-      setState(s => ({ ...s, chapters: [...s.chapters, newChapter] }));
+      try {
+        const saved = await api.createChapter(newChapter);
+        resultId = saved.id;
+        setState(s => ({ ...s, chapters: s.chapters.map(ch => ch.id === newChapter.id ? saved : ch) }));
+      } catch (err) {
+        console.warn('API createChapter failed (kept in state):', err);
+      }
     }
     return resultId;
   }, [isDemo]);
