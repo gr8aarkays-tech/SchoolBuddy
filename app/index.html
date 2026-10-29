@@ -22,7 +22,7 @@
         var p = window.location.search.match(/[?&]p=([^&]+)/);
         if (p) {
           var path = decodeURIComponent(p[1].replace(/~and~/g, '&'));
-          window.history.replaceState(null, null, '/SchoolBuddy' + path + (window.location.hash || ''));
+          window.history.replaceState(null, null, '/AiClass' + path + (window.location.hash || ''));
         }
       })();
     </script>

@@ -9,8 +9,13 @@ const securityHeaders = {
   'Cross-Origin-Embedder-Policy': 'require-corp',
 };
 
+// When building for Capacitor (Android/iOS) the assets must be served from
+// the root path inside the WebView — not from a sub-path like /AiClass/.
+// Set VITE_CAPACITOR=true in the environment to enable this.
+const isCapacitor = process.env.VITE_CAPACITOR === 'true';
+
 export default defineConfig({
-  base: '/SchoolBuddy/',
+  base: isCapacitor ? '/' : '/AiClass/',
   server: {
     headers: securityHeaders,
     proxy: {
@@ -29,8 +34,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
       manifest: {
-        name: 'SchoolBuddy – AI Learning Assistant',
-        short_name: 'SchoolBuddy',
+        name: 'AiClass – AI Learning Assistant',
+        short_name: 'AiClass',
         description: 'AI-powered school learning assistant for parents',
         theme_color: '#2563eb',
         background_color: '#ffffff',

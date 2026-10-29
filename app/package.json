@@ -9,9 +9,17 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "predeploy": "npm run build",
-    "deploy": "gh-pages -d dist"
+    "deploy": "gh-pages -d dist",
+    "build:android": "cross-env VITE_CAPACITOR=true tsc -b && cross-env VITE_CAPACITOR=true vite build",
+    "android:sync": "npm run build:android && npx cap sync android",
+    "android:open": "npx cap open android",
+    "android:run": "npm run build:android && npx cap run android",
+    "apk": "npm run android:sync && cd android && gradlew.bat assembleDebug"
   },
   "dependencies": {
+    "@capacitor/android": "8.5.3",
+    "@capacitor/cli": "8.5.3",
+    "@capacitor/core": "8.5.3",
     "@mlc-ai/web-llm": "^0.2.85",
     "lucide-react": "^1.47.0",
     "pdfjs-dist": "^6.3.289",
@@ -29,6 +37,7 @@
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
     "autoprefixer": "^10.6.1",
+    "cross-env": "^10.1.0",
     "gh-pages": "^6.3.0",
     "oxlint": "^1.81.0",
     "postcss": "^8.5.28",

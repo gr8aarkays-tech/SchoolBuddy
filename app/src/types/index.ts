@@ -1,17 +1,30 @@
 // ─── App Settings ─────────────────────────────────────────────────────────────
 
-export type AIProvider = 'mock' | 'openai' | 'anthropic' | 'watsonx' | 'local';
+export type AIProvider =
+  | 'mock'
+  | 'openai'
+  | 'anthropic'
+  | 'watsonx'
+  | 'local'
+  | 'ollama'       // Free — runs on your own machine/server (ollama.ai)
+  | 'openrouter';  // Free-tier — access to Gemma, Mistral, LLaMA via one key
 
 export interface AppSettings {
   aiProvider: AIProvider;
   apiKey: string;
   localModelId: string;
+  ollamaUrl: string;       // e.g. http://localhost:11434
+  ollamaModel: string;     // e.g. gemma3, llama3.2, mistral
+  openRouterModel: string; // e.g. google/gemma-3-12b-it:free
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  aiProvider: 'mock',
+  aiProvider: 'local',
   apiKey: '',
   localModelId: 'Llama-3.2-1B-Instruct-q4f16_1-MLC',
+  ollamaUrl: 'http://localhost:11434',
+  ollamaModel: 'gemma3',
+  openRouterModel: 'google/gemma-3-12b-it:free',
 };
 
 // ─── Core entities ───────────────────────────────────────────────────────────

@@ -46,6 +46,30 @@ function getLocalModelId(): string {
   return 'Llama-3.2-1B-Instruct-q4f16_1-MLC';
 }
 
+function getOllamaUrl(): string {
+  try {
+    const s = JSON.parse(localStorage.getItem('sanju_settings') || '{}');
+    return (s.ollamaUrl || 'http://localhost:11434').replace(/\/$/, '');
+  } catch { /* ignore */ }
+  return 'http://localhost:11434';
+}
+
+function getOllamaModel(): string {
+  try {
+    const s = JSON.parse(localStorage.getItem('sanju_settings') || '{}');
+    return s.ollamaModel || 'gemma3';
+  } catch { /* ignore */ }
+  return 'gemma3';
+}
+
+function getOpenRouterModel(): string {
+  try {
+    const s = JSON.parse(localStorage.getItem('sanju_settings') || '{}');
+    return s.openRouterModel || 'google/gemma-3-12b-it:free';
+  } catch { /* ignore */ }
+  return 'google/gemma-3-12b-it:free';
+}
+
 // ─── PDF extraction (pdfjs-dist) ─────────────────────────────────────────────
 
 async function getPdfJs() {
@@ -289,10 +313,12 @@ export async function analyzeExtractedText(text: string, defaultSubject?: string
   }
 
   let raw: string;
-  if (PROVIDER === 'openai')         raw = await callOpenAIChat(ANALYSIS_PROMPT + text);
-  else if (PROVIDER === 'anthropic') raw = await callAnthropicChat(ANALYSIS_PROMPT + text);
-  else if (PROVIDER === 'watsonx')   raw = await callWatsonxChat(ANALYSIS_PROMPT + text);
-  else if (PROVIDER === 'local')     raw = await callLocalLLMChat(ANALYSIS_PROMPT + text);
+  if (PROVIDER === 'openai')           raw = await callOpenAIChat(ANALYSIS_PROMPT + text);
+  else if (PROVIDER === 'anthropic')   raw = await callAnthropicChat(ANALYSIS_PROMPT + text);
+  else if (PROVIDER === 'watsonx')     raw = await callWatsonxChat(ANALYSIS_PROMPT + text);
+  else if (PROVIDER === 'local')       raw = await callLocalLLMChat(ANALYSIS_PROMPT + text);
+  else if (PROVIDER === 'ollama')      raw = await callOllamaChat(ANALYSIS_PROMPT + text);
+  else if (PROVIDER === 'openrouter')  raw = await callOpenRouterChat(ANALYSIS_PROMPT + text);
   else throw new Error(`Unknown AI provider: ${PROVIDER}`);
 
   return parseAnalysisResponse(raw);
@@ -511,6 +537,45 @@ export async function testAIConnection(provider: AIProvider, apiKey: string): Pr
       return { success: true, message: 'Anthropic connected successfully (claude-haiku-4-5 ready)' };
     }
 
+    if (provider === 'ollama') {
+      const base = getOllamaUrl();
+      const model = getOllamaModel();
+      try {
+        const res = await fetch(`${base}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Say OK' }], stream: false }),
+        });
+        if (!res.ok) return { success: false, message: `Ollama error ${res.status} — is Ollama running?` };
+        return { success: true, message: `Ollama connected (model: ${model})` };
+      } catch (e: any) {
+        return { success: false, message: `Cannot reach Ollama at ${base} — make sure it is running` };
+      }
+    }
+
+    if (provider === 'openrouter') {
+      const model = getOpenRouterModel();
+      try {
+        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey.trim()}`,
+            'HTTP-Referer': window.location.origin,
+            'X-Title': 'AiClass',
+          },
+          body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Say OK' }], max_tokens: 5 }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          return { success: false, message: (err as any)?.error?.message || `HTTP ${res.status}` };
+        }
+        return { success: true, message: `OpenRouter connected (model: ${model})` };
+      } catch (e: any) {
+        return { success: false, message: e.message || 'Connection error' };
+      }
+    }
+
     return { success: false, message: `Testing for ${provider} not supported directly` };
   } catch (e: any) {
     return { success: false, message: e.message || 'Connection error' };
@@ -548,6 +613,62 @@ async function callWatsonxChat(prompt: string): Promise<string> {
   }
   const data = await res.json();
   return data.results?.[0]?.generated_text ?? '';
+}
+
+// ─── Ollama (free, self-hosted) ───────────────────────────────────────────────
+// Install from https://ollama.ai — runs models like Gemma, Mistral, LLaMA locally.
+// The app talks to its REST API on localhost (or any custom URL).
+
+async function callOllamaChat(prompt: string): Promise<string> {
+  const base  = getOllamaUrl();
+  const model = getOllamaModel();
+  const res = await fetch(`${base}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      stream: false,
+      options: { temperature: 0.2, num_predict: 1000 },
+    }),
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => res.statusText);
+    throw new Error(`Ollama error ${res.status}: ${txt}`);
+  }
+  const data = await res.json();
+  return data.message?.content ?? '';
+}
+
+// ─── OpenRouter (free-tier, cloud) ────────────────────────────────────────────
+// Sign up free at https://openrouter.ai — gives access to Gemma 3, Mistral,
+// LLaMA 3 and more. Free models are marked with ":free" in their id.
+// Get your key at https://openrouter.ai/keys (no credit card for free tier).
+
+async function callOpenRouterChat(prompt: string): Promise<string> {
+  const API_KEY = getApiKey();
+  const model   = getOpenRouterModel();
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${API_KEY}`,
+      'HTTP-Referer': window.location.origin,
+      'X-Title': 'AiClass',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.2,
+      max_tokens: 1000,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(`OpenRouter error ${res.status}: ${(err as any)?.error?.message ?? res.statusText}`);
+  }
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content ?? '';
 }
 
 // ─── Mock fallback (deterministic, no API key needed) ────────────────────────
@@ -701,10 +822,12 @@ Return ONLY valid JSON — no markdown fences, no commentary — matching this s
   }
 }`;
     let raw = '';
-    if (PROVIDER === 'openai')         raw = await callOpenAIChat(prompt);
-    else if (PROVIDER === 'anthropic') raw = await callAnthropicChat(prompt);
-    else if (PROVIDER === 'watsonx')   raw = await callWatsonxChat(prompt);
-    else if (PROVIDER === 'local')     raw = await callLocalLLMChat(prompt);
+    if (PROVIDER === 'openai')           raw = await callOpenAIChat(prompt);
+    else if (PROVIDER === 'anthropic')   raw = await callAnthropicChat(prompt);
+    else if (PROVIDER === 'watsonx')     raw = await callWatsonxChat(prompt);
+    else if (PROVIDER === 'local')       raw = await callLocalLLMChat(prompt);
+    else if (PROVIDER === 'ollama')      raw = await callOllamaChat(prompt);
+    else if (PROVIDER === 'openrouter')  raw = await callOpenRouterChat(prompt);
 
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
     try {
@@ -806,7 +929,28 @@ function getMockStudyGuide(subject: string, chapter: string): StudyGuideSection 
 
 // ─── Exam Study Plan ──────────────────────────────────────────────────────────
 
-export async function generateExamPlan(_examName: string, daysLeft: number, subjects: string[]): Promise<string[]> {
+export async function generateExamPlan(examName: string, daysLeft: number, subjects: string[]): Promise<string[]> {
+  const PROVIDER = getProvider();
+  if (PROVIDER !== 'mock') {
+    const prompt = `You are an AI tutor helping an Indian school child prepare for an exam.
+Create a ${daysLeft}-day study plan for the exam "${examName}" covering these subjects: ${subjects.join(', ')}.
+Return ONLY a JSON array of strings — one entry per day, starting from Day 1. No markdown fences, no extra text.
+Example format: ["Day 1: Focus on Mathematics – revise chapter 1", "Day 2: ..."]
+Make exactly ${daysLeft} entries, numbered Day 1 through Day ${daysLeft}.`;
+    try {
+      let raw = '';
+      if (PROVIDER === 'openai')           raw = await callOpenAIChat(prompt);
+      else if (PROVIDER === 'anthropic')   raw = await callAnthropicChat(prompt);
+      else if (PROVIDER === 'watsonx')     raw = await callWatsonxChat(prompt);
+      else if (PROVIDER === 'local')       raw = await callLocalLLMChat(prompt);
+      else if (PROVIDER === 'ollama')      raw = await callOllamaChat(prompt);
+      else if (PROVIDER === 'openrouter')  raw = await callOpenRouterChat(prompt);
+      const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+      const parsed = JSON.parse(cleaned);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed as string[];
+    } catch { /* fall through to mock */ }
+  }
+
   await delay(1500);
   const plan: string[] = [];
   subjects.forEach((sub, i) => {
@@ -821,6 +965,36 @@ export async function generateExamPlan(_examName: string, daysLeft: number, subj
 // ─── Question Paper Generation ────────────────────────────────────────────────
 
 export async function generateQuestionPaper(config: QuestionPaperConfig): Promise<Question[]> {
+  const PROVIDER = getProvider();
+  if (PROVIDER !== 'mock') {
+    const typesSummary = config.questionTypes
+      .map(qt => `${qt.quantity} × ${qt.type.replace(/_/g, ' ')} (${qt.marks} mark each)`)
+      .join(', ');
+    const prompt = `You are an AI generating a school exam question paper for Indian primary school students.
+Subject: ${config.subject}
+Chapters/Topics: ${config.sourceChapters.join(', ')}
+Difficulty: ${config.difficulty}
+Question types required: ${typesSummary}
+
+Return ONLY a JSON array of question objects. No markdown fences, no commentary.
+Each object must have these fields:
+{ "id": "q-1", "type": "<question_type>", "question": "<text>", "answer": "<text>", "explanation": "<text>", "marks": <number>, "topic": "<chapter>" }
+For MCQ also include: "options": ["A", "B", "C", "D"]
+Use realistic Indian school curriculum content. Generate exactly the quantities requested above.`;
+    try {
+      let raw = '';
+      if (PROVIDER === 'openai')           raw = await callOpenAIChat(prompt);
+      else if (PROVIDER === 'anthropic')   raw = await callAnthropicChat(prompt);
+      else if (PROVIDER === 'watsonx')     raw = await callWatsonxChat(prompt);
+      else if (PROVIDER === 'local')       raw = await callLocalLLMChat(prompt);
+      else if (PROVIDER === 'ollama')      raw = await callOllamaChat(prompt);
+      else if (PROVIDER === 'openrouter')  raw = await callOpenRouterChat(prompt);
+      const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+      const parsed = JSON.parse(cleaned);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed as Question[];
+    } catch { /* fall through to mock */ }
+  }
+
   await delay(3000);
   const questions: Question[] = [];
   let qIdx = 0;
@@ -859,6 +1033,23 @@ export async function generateQuestionPaper(config: QuestionPaperConfig): Promis
 // ─── Chat assistant ───────────────────────────────────────────────────────────
 
 export async function chatWithAssistant(message: string, childName: string): Promise<string> {
+  const PROVIDER = getProvider();
+  if (PROVIDER !== 'mock') {
+    const prompt = `You are a helpful AI school learning assistant for an Indian parent.
+The child's name is ${childName}. You help parents understand what their child should study,
+create revision plans, explain concepts, and generate practice questions.
+Be friendly, concise, and practical. Use simple language suitable for primary school parents.
+Parent's question: ${message}`;
+    try {
+      if (PROVIDER === 'openai')         return await callOpenAIChat(prompt);
+      if (PROVIDER === 'anthropic')      return await callAnthropicChat(prompt);
+      if (PROVIDER === 'watsonx')        return await callWatsonxChat(prompt);
+      if (PROVIDER === 'local')          return await callLocalLLMChat(prompt);
+    } catch (e) {
+      return `Sorry, I couldn't get a response from the AI: ${(e as Error).message}`;
+    }
+  }
+
   await delay(1200);
   const lower = message.toLowerCase();
 

@@ -18,13 +18,17 @@ import { Children } from './pages/Children';
 import { AIAssistant } from './pages/AIAssistant';
 import { Settings } from './pages/Settings';
 
+// When bundled for Capacitor (Android/iOS) assets are served from root —
+// no sub-path basename needed.
+const routerBase = import.meta.env.VITE_CAPACITOR === 'true' ? '/' : '/AiClass';
+
 export default function App() {
   return (
     <ThemeProvider>
       <SettingsProvider>
       <AuthProvider>
         <AppProvider>
-          <BrowserRouter basename="/SchoolBuddy">
+          <BrowserRouter basename={routerBase}>
             <Routes>
               {/* Public routes */}
               <Route path="/login" element={<LoginPage />} />

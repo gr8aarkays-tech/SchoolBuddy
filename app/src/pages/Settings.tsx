@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Key, Server, Shield, Bell, Download, Trash2, CheckCircle, AlertTriangle, Cpu, Loader2 } from 'lucide-react';
+import { Settings as SettingsIcon, Key, Server, Shield, Bell, Download, Trash2, CheckCircle, AlertTriangle, Cpu, Loader2, Globe, MonitorSmartphone } from 'lucide-react';
 import { useSettings } from '../contexts/SettingsContext';
 import { ENGINE_MODELS, initEngine, isModelCached, deleteModelCache, getLoadedModelId } from '../services/webllmEngine';
 import { testAIConnection } from '../services/aiService';
@@ -14,11 +14,36 @@ export function Settings() {
   const [testingConnection, setTestingConnection] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  // Free OpenRouter models — no credit card needed
+  const OPENROUTER_FREE_MODELS = [
+    { id: 'google/gemma-3-12b-it:free',       label: 'Gemma 3 12B (Google) — best free quality' },
+    { id: 'google/gemma-3-4b-it:free',        label: 'Gemma 3 4B (Google) — faster, lighter' },
+    { id: 'meta-llama/llama-3.2-3b-instruct:free', label: 'LLaMA 3.2 3B (Meta)' },
+    { id: 'meta-llama/llama-3.1-8b-instruct:free', label: 'LLaMA 3.1 8B (Meta) — strong reasoning' },
+    { id: 'mistralai/mistral-7b-instruct:free',    label: 'Mistral 7B — good for multilingual' },
+    { id: 'qwen/qwen-2.5-7b-instruct:free',        label: 'Qwen 2.5 7B — great for Hindi/regional text' },
+    { id: 'microsoft/phi-3-mini-128k-instruct:free', label: 'Phi-3 Mini (Microsoft) — very fast' },
+  ];
+
+  // Popular Ollama models
+  const OLLAMA_MODELS = [
+    { id: 'gemma3',       label: 'Gemma 3 (Google) — recommended' },
+    { id: 'llama3.2',     label: 'LLaMA 3.2 3B (Meta)' },
+    { id: 'llama3.1',     label: 'LLaMA 3.1 8B (Meta)' },
+    { id: 'mistral',      label: 'Mistral 7B' },
+    { id: 'qwen2.5',      label: 'Qwen 2.5 7B — good for Hindi' },
+    { id: 'phi3',         label: 'Phi-3 Mini (Microsoft) — very fast' },
+    { id: 'deepseek-r1',  label: 'DeepSeek R1 — strong reasoning' },
+  ];
+
   // Local draft state — committed on Save
   const [draft, setDraft] = useState({
     aiProvider: settings.aiProvider,
     apiKey: settings.apiKey,
     localModelId: settings.localModelId,
+    ollamaUrl: settings.ollamaUrl ?? 'http://localhost:11434',
+    ollamaModel: settings.ollamaModel ?? 'gemma3',
+    openRouterModel: settings.openRouterModel ?? 'google/gemma-3-12b-it:free',
     notifications: localStorage.getItem(NOTIF_KEY) !== 'false',
   });
 
@@ -86,6 +111,9 @@ export function Settings() {
       aiProvider: draft.aiProvider,
       apiKey: draft.apiKey,
       localModelId: draft.localModelId,
+      ollamaUrl: draft.ollamaUrl,
+      ollamaModel: draft.ollamaModel,
+      openRouterModel: draft.openRouterModel,
     });
     // Persist the notifications preference independently
     localStorage.setItem(NOTIF_KEY, String(draft.notifications));
@@ -110,13 +138,19 @@ export function Settings() {
             <select
               className="select"
               value={draft.aiProvider}
-              onChange={e => setDraft(d => ({ ...d, aiProvider: e.target.value as AIProvider }))}
+              onChange={e => setDraft(d => ({ ...d, aiProvider: e.target.value as AIProvider, }))}
             >
-              <option value="local">⭐ Local AI (Free, On-Device) — no subscription needed</option>
-              <option value="mock">Mock (Development / Testing)</option>
-              <option value="openai">OpenAI (GPT-4o mini)</option>
-              <option value="watsonx">IBM watsonx.ai</option>
-              <option value="anthropic">Anthropic (Claude Haiku)</option>
+              <optgroup label="── Free (recommended) ───────────────">
+                <option value="local">⭐ Local AI (On-Device) — 100% free, works offline</option>
+                <option value="openrouter">🌐 OpenRouter Free Tier — free key, no credit card</option>
+                <option value="ollama">🦙 Ollama (Self-Hosted) — free, run on your PC/Mac</option>
+                <option value="mock">🧪 Mock — fake responses for testing</option>
+              </optgroup>
+              <optgroup label="── Paid cloud providers ─────────────">
+                <option value="openai">OpenAI (GPT-4o mini) — paid</option>
+                <option value="anthropic">Anthropic (Claude Haiku) — paid</option>
+                <option value="watsonx">IBM watsonx.ai — paid</option>
+              </optgroup>
             </select>
             {draft.aiProvider === 'mock' && (
               <p className="text-xs text-green-600 mt-1">✓ Using mock AI responses. No API key required.</p>
@@ -124,9 +158,138 @@ export function Settings() {
             {draft.aiProvider === 'local' && (
               <p className="text-xs text-green-600 mt-1">✓ AI runs entirely on your device. No internet needed after model download.</p>
             )}
+            {draft.aiProvider === 'ollama' && (
+              <p className="text-xs text-green-600 mt-1">✓ Runs on your own machine — completely free, no API key needed.</p>
+            )}
+            {draft.aiProvider === 'openrouter' && (
+              <p className="text-xs text-blue-600 mt-1">✓ Free API key — no credit card required for free-tier models.</p>
+            )}
           </div>
 
-          {/* ── Cloud API key ──────────────────────────────────────── */}
+          {/* ── Ollama config ──────────────────────────────────────── */}
+          {draft.aiProvider === 'ollama' && (
+            <div className="space-y-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+              <div className="flex items-center gap-2">
+                <MonitorSmartphone className="w-4 h-4 text-green-700" />
+                <span className="text-sm font-medium text-green-800">Ollama — Free, Self-Hosted</span>
+              </div>
+              <p className="text-xs text-green-700">
+                Install <a href="https://ollama.ai" target="_blank" rel="noopener noreferrer" className="underline font-medium">ollama.ai</a> on your PC/Mac, then run <code className="bg-green-100 px-1 rounded">ollama pull gemma3</code> in a terminal.
+              </p>
+              <div>
+                <label className="label">Server URL</label>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="http://localhost:11434"
+                  value={draft.ollamaUrl}
+                  onChange={e => setDraft(d => ({ ...d, ollamaUrl: e.target.value }))}
+                />
+                <p className="text-xs text-gray-400 mt-1">Default: http://localhost:11434 — change if running on a different device.</p>
+              </div>
+              <div>
+                <label className="label">Model</label>
+                <select
+                  className="select"
+                  value={draft.ollamaModel}
+                  onChange={e => setDraft(d => ({ ...d, ollamaModel: e.target.value }))}
+                >
+                  {OLLAMA_MODELS.map(m => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-400 mt-1">
+                  Pull the model first: <code className="bg-gray-100 px-1 rounded">ollama pull {draft.ollamaModel}</code>
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={testingConnection}
+                onClick={async () => {
+                  setTestingConnection(true);
+                  setTestResult(null);
+                  const res = await testAIConnection(draft.aiProvider, '');
+                  setTestResult(res);
+                  setTestingConnection(false);
+                }}
+                className="text-xs text-green-700 hover:text-green-900 font-medium flex items-center gap-1 disabled:opacity-50"
+              >
+                {testingConnection ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                Test Connection
+              </button>
+              {testResult && (
+                <div className={`p-2 rounded text-xs flex items-center gap-1.5 ${testResult.success ? 'bg-green-100 text-green-700' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+                  {testResult.success ? <CheckCircle className="w-3.5 h-3.5 shrink-0" /> : <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
+                  <span>{testResult.message}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── OpenRouter free-tier config ────────────────────────── */}
+          {draft.aiProvider === 'openrouter' && (
+            <div className="space-y-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center gap-2">
+                <Globe className="w-4 h-4 text-blue-700" />
+                <span className="text-sm font-medium text-blue-800">OpenRouter — Free Tier</span>
+              </div>
+              <p className="text-xs text-blue-700">
+                Sign up free at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="underline font-medium">openrouter.ai/keys</a> — no credit card needed for free models.
+              </p>
+              <div>
+                <label className="label">Free Model</label>
+                <select
+                  className="select"
+                  value={draft.openRouterModel}
+                  onChange={e => setDraft(d => ({ ...d, openRouterModel: e.target.value }))}
+                >
+                  {OPENROUTER_FREE_MODELS.map(m => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-400 mt-1">All models ending in <code className="bg-gray-100 px-1 rounded">:free</code> are completely free to use.</p>
+              </div>
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className="label">OpenRouter API Key</label>
+                  <button
+                    type="button"
+                    disabled={testingConnection || !draft.apiKey.trim()}
+                    onClick={async () => {
+                      setTestingConnection(true);
+                      setTestResult(null);
+                      const res = await testAIConnection(draft.aiProvider, draft.apiKey);
+                      setTestResult(res);
+                      setTestingConnection(false);
+                    }}
+                    className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1 disabled:opacity-50"
+                  >
+                    {testingConnection ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                    Test Key
+                  </button>
+                </div>
+                <div className="relative">
+                  <Key className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
+                  <input
+                    type="password"
+                    className="input pl-9"
+                    placeholder="sk-or-v1-…"
+                    value={draft.apiKey}
+                    onChange={e => { setDraft(d => ({ ...d, apiKey: e.target.value })); setTestResult(null); }}
+                  />
+                </div>
+                {testResult && (
+                  <div className={`mt-2 p-2 rounded text-xs flex items-center gap-1.5 ${testResult.success ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+                    {testResult.success ? <CheckCircle className="w-3.5 h-3.5 shrink-0" /> : <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
+                    <span>{testResult.message}</span>
+                  </div>
+                )}
+                <p className="text-xs text-gray-400 mt-1">Your key is stored only in your browser — never sent to our servers.</p>
+              </div>
+            </div>
+          )}
+
+          {/* ── Paid cloud API key ─────────────────────────────────── */}
           {(draft.aiProvider === 'openai' || draft.aiProvider === 'anthropic') && (
             <div>
               <div className="flex items-center justify-between">
