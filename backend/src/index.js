@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import routes from './routes.js';
+import authRoutes from './auth.js';
 
 const PORT = process.env.PORT || 3001;
 
@@ -39,8 +40,11 @@ app.use(cors({
 app.use(express.json());
 
 // Public endpoints
-app.get('/', (_, res) => res.json({ name: 'SchoolBuddy API', status: 'ok' }));
+app.get('/', (_, res) => res.json({ name: 'AiClass API', status: 'ok' }));
 app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
+
+// Auth routes — public (no API secret needed, they issue their own tokens)
+app.use('/auth', authRoutes);
 
 // All /api/* routes require auth
 app.use('/api', requireAuth, routes);
