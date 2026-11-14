@@ -32,6 +32,11 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Inside the Android app all assets are bundled in the APK, so a service
+      // worker only causes stale-cache errors ("Failed to fetch dynamically
+      // imported module"). This emits a sw.js that unregisters any previously
+      // installed worker and clears its caches.
+      selfDestroying: isCapacitor,
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
       manifest: {
         name: 'AiClass – AI Learning Assistant',
