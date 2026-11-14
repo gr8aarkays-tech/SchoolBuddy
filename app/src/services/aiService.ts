@@ -794,6 +794,27 @@ function mockAnalyze(text: string, defaultSubject?: string): ExtractedContent {
   };
 }
 
+// ─── Chapter-name cleanup ─────────────────────────────────────────────────────
+
+// Lines that are page headers / school details rather than chapter titles
+const NON_CHAPTER_LATIN = /\b(institutions?|institute|school|academy|college|university|vidyalaya)\b|\bgroup of\b|^\s*(subject|class|grade|name|date|week|term|time\s*table|roll\s*no)\b\s*[:\-–\d]/i;
+const NON_CHAPTER_INDIC = /विद्यालय|स्कूल|संस्थान|ಶಾಲೆ|పాఠశాల/;
+
+/**
+ * Removes school names / header lines from detected chapter titles. If nothing
+ * usable is left, returns a single default name "<Subject> – <date>" that the
+ * user can rename later from the Study Guide page.
+ */
+export function cleanChapterNames(chapters: string[], subject: string, dateReceived?: string): string[] {
+  const kept = chapters.filter(c => !NON_CHAPTER_LATIN.test(c) && !NON_CHAPTER_INDIC.test(c));
+  if (kept.length > 0) return kept;
+
+  const d = dateReceived ? new Date(`${dateReceived}T00:00:00`) : new Date();
+  const when = (isNaN(d.getTime()) ? new Date() : d)
+    .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  return [`${subject || 'Material'} – ${when}`];
+}
+
 // ─── Study Guide Generation ───────────────────────────────────────────────────
 
 export interface StudyGuideSection {
@@ -1076,7 +1097,9 @@ export function buildStudyGuideFromText(text: string, subject: string, chapterNa
   const lines = text
     .split('\n')
     .map(l => l.replace(/\s+/g, ' ').trim())
-    .filter(l => l.length > 3 && !isCorruptedIndicFont(l));
+    .filter(l => l.length > 3 && !isCorruptedIndicFont(l))
+    // Drop short page-header lines (school name, "SUBJECT – HINDI", "WEEK …")
+    .filter(l => l.length > 80 || !(NON_CHAPTER_LATIN.test(l) || NON_CHAPTER_INDIC.test(l)));
 
   // Sentences: clean meaningful sentences
   const sentences = lines.filter(l => l.length >= 15 && !/^[\d\.\-\*•\s]+$/.test(l));

@@ -461,6 +461,19 @@ export function AppProvider({ children: reactChildren }: { children: React.React
     return resultId;
   }, [isDemo]);
 
+  const renameChapter = useCallback(async (id: string, name: string): Promise<void> => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setState(s => ({ ...s, chapters: s.chapters.map(ch => ch.id === id ? { ...ch, name: trimmed } : ch) }));
+    if (!isDemo) {
+      try {
+        await api.updateChapter(id, { name: trimmed });
+      } catch (err) {
+        console.warn('API updateChapter failed (kept in state):', err);
+      }
+    }
+  }, [isDemo]);
+
   const upsertTopic = useCallback(async (chapterId: string, name: string): Promise<void> => {
     let existing: Topic | undefined;
     setState(s => {
@@ -536,7 +549,7 @@ export function AppProvider({ children: reactChildren }: { children: React.React
     addQuestionPaper, deleteQuestionPaper, addExam, updateExam, deleteExam,
     updateTopic, addPracticeAttempt,
     addWeeklyLesson, updateWeeklyLesson,
-    upsertSubject, upsertChapter, upsertTopic,
+    upsertSubject, upsertChapter, renameChapter, upsertTopic,
     getChildSubjects, getSubjectChapters, getChapterTopics,
     getChildExams, getChildMaterials, getMaterialsForSubject, getChildWeeklyLessons, getChildQuestionPapers,
     getExamStudyPlan, saveStudyPlan, deleteStudyPlan,

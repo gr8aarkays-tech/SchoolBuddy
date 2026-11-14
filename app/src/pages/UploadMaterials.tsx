@@ -3,7 +3,7 @@ import { Upload, FileText, Link as LinkIcon, X, CheckCircle, AlertCircle, Loader
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../contexts/AppContext';
 import { Modal, LoadingSpinner, SectionHeader } from '../components/shared/UI';
-import { extractTextFromImage, extractTextFromPdf, extractContentFromUrl, analyzeExtractedText } from '../services/aiService';
+import { extractTextFromImage, extractTextFromPdf, extractContentFromUrl, analyzeExtractedText, cleanChapterNames } from '../services/aiService';
 import type { UploadedMaterial, MaterialType, ExtractedContent } from '../types';
 import { MATERIAL_TYPE_LABELS } from '../types';
 
@@ -120,7 +120,12 @@ export function UploadMaterials() {
       }
 
       setProcessingStatus('Analyzing content with AI…');
-      const structured = await analyzeExtractedText(rawText, form.subject);
+      const analyzed = await analyzeExtractedText(rawText, form.subject);
+      // Drop school/header lines; fall back to "<Subject> – <date>" (renameable later)
+      const structured = {
+        ...analyzed,
+        chapters: cleanChapterNames(analyzed.chapters, form.subject, form.dateReceived),
+      };
       setExtractedText(rawText);
       setLastStructured(structured);
 

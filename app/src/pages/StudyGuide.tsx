@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { BookOpen, ChevronDown, ChevronRight, Lightbulb, Eye, Pencil, Dumbbell, Zap, Loader, FileText, Plus } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronRight, Lightbulb, Eye, Pencil, Dumbbell, Zap, Loader, FileText, Plus, Edit3 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { LoadingSpinner, StatusBadge, SectionHeader, Modal } from '../components/shared/UI';
 import { generateStudyGuide, buildStudyGuideFromText, type StudyGuideSection } from '../services/aiService';
@@ -8,7 +8,7 @@ import { STUDY_STATUS_LABELS } from '../types';
 
 export function StudyGuide() {
   const location = useLocation();
-  const { selectedChild, getChildSubjects, getSubjectChapters, getChapterTopics, updateTopic, getMaterialsForSubject, upsertSubject, upsertChapter } = useApp();
+  const { selectedChild, getChildSubjects, getSubjectChapters, getChapterTopics, updateTopic, getMaterialsForSubject, upsertSubject, upsertChapter, renameChapter } = useApp();
   const [selectedSubject, setSelectedSubject] = useState('');
   const [selectedChapter, setSelectedChapter] = useState('');
   const [guide, setGuide] = useState<StudyGuideSection | null>(null);
@@ -19,6 +19,8 @@ export function StudyGuide() {
   // Add subject/chapter modal state
   const [addSubjectOpen, setAddSubjectOpen] = useState(false);
   const [addChapterOpen, setAddChapterOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
   const [newSubjectName, setNewSubjectName] = useState('');
   const [newChapterName, setNewChapterName] = useState('');
   const [adding, setAdding] = useState(false);
@@ -68,6 +70,16 @@ export function StudyGuide() {
     setNewChapterName('');
     setAddChapterOpen(false);
     setSelectedChapter(id);
+    setGuide(null);
+  };
+
+  const handleRenameChapter = async () => {
+    const name = renameValue.trim();
+    if (!name || !selectedChapter) return;
+    setAdding(true);
+    await renameChapter(selectedChapter, name);
+    setAdding(false);
+    setRenameOpen(false);
     setGuide(null);
   };
 
@@ -139,6 +151,12 @@ export function StudyGuide() {
                 <option value="">Select chapter…</option>
                 {chapters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
+              <button
+                onClick={() => { setRenameValue(chapters.find(c => c.id === selectedChapter)?.name ?? ''); setRenameOpen(true); }}
+                disabled={!selectedChapter}
+                className="btn-secondary px-2 flex-shrink-0 disabled:opacity-40"
+                title="Rename chapter"
+              ><Edit3 className="w-4 h-4" /></button>
               <button onClick={() => setAddChapterOpen(true)} disabled={!selectedSubject} className="btn-secondary px-2 flex-shrink-0 disabled:opacity-40" title="Add new chapter"><Plus className="w-4 h-4" /></button>
             </div>
           </div>
@@ -179,6 +197,20 @@ export function StudyGuide() {
           <div className="flex gap-3 pt-1">
             <button onClick={() => setAddChapterOpen(false)} className="btn-secondary flex-1">Cancel</button>
             <button onClick={handleAddChapter} disabled={!newChapterName.trim() || adding} className="btn-primary flex-1">{adding ? 'Adding…' : 'Add Chapter'}</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Rename Chapter modal */}
+      <Modal open={renameOpen} onClose={() => setRenameOpen(false)} title="Rename Chapter">
+        <div className="space-y-3">
+          <div>
+            <label className="label">Chapter Name *</label>
+            <input type="text" className="input" value={renameValue} onChange={e => setRenameValue(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleRenameChapter()} autoFocus />
+          </div>
+          <div className="flex gap-3 pt-1">
+            <button onClick={() => setRenameOpen(false)} className="btn-secondary flex-1">Cancel</button>
+            <button onClick={handleRenameChapter} disabled={!renameValue.trim() || adding} className="btn-primary flex-1">{adding ? 'Saving…' : 'Save'}</button>
           </div>
         </div>
       </Modal>
