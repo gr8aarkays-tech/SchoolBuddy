@@ -59,6 +59,19 @@ async function verifyPassword(password, salt, storedHash) {
   }
 }
 
+// ─── Demo account (matches the "Try the app" banner on the login page) ───────
+
+{
+  const { rows } = await db.execute({ sql: 'SELECT id FROM users WHERE id = ?', args: ['user-demo'] });
+  if (rows.length === 0) {
+    const salt = randomBytes(16).toString('hex');
+    await db.execute({
+      sql: 'INSERT OR IGNORE INTO users (id, name, email, passwordHash, salt, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
+      args: ['user-demo', 'Demo User', 'tester@test.com', await hashPassword('test123', salt), salt, '2024-01-01T00:00:00Z'],
+    });
+  }
+}
+
 // ─── POST /auth/register ──────────────────────────────────────────────────────
 
 router.post('/register', async (req, res) => {

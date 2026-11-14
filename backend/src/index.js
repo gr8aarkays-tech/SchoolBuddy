@@ -34,6 +34,10 @@ app.use(cors({
     'https://gr8aarkays-tech.github.io',
     'http://localhost:5173',
     'http://localhost:4173',
+    // Capacitor Android / iOS WebView origins
+    'https://localhost',
+    'http://localhost',
+    'capacitor://localhost',
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 }));
