@@ -14,7 +14,10 @@ const API_SECRET = import.meta.env.VITE_API_SECRET ?? '';
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
   if (body) headers['Content-Type'] = 'application/json';
-  if (API_SECRET) headers['Authorization'] = `Bearer ${API_SECRET}`;
+  // Prefer the signed user token from login; fall back to the shared secret (if configured)
+  const userToken = localStorage.getItem('sanju_auth_token');
+  const bearer = userToken || API_SECRET;
+  if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
 
   const res = await fetch(`${BASE}${path}`, {
     method,

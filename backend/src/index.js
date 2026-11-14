@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import routes from './routes.js';
-import authRoutes from './auth.js';
+import authRoutes, { verifyToken } from './auth.js';
 
 const PORT = process.env.PORT || 3001;
 
@@ -22,10 +22,11 @@ function requireAuth(req, res, next) {
   const authHeader = req.headers['authorization'] || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
 
-  if (!token || token !== API_SECRET) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  // Accept either a signed user token (issued by /auth/login) or the shared API secret
+  if (token && (verifyToken(token) || (API_SECRET && token === API_SECRET))) {
+    return next();
   }
-  next();
+  return res.status(401).json({ error: 'Unauthorized' });
 }
 
 const app = express();
